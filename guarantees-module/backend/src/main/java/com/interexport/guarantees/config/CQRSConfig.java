@@ -1,6 +1,9 @@
 package com.interexport.guarantees.config;
 
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.context.annotation.Bean;
@@ -27,23 +30,57 @@ import java.util.Properties;
 @Profile("cqrs")
 public class CQRSConfig {
     
+    @Value("${spring.datasource.url}")
+    private String commandUrl;
+    
+    @Value("${spring.datasource.username}")
+    private String commandUsername;
+    
+    @Value("${spring.datasource.password}")
+    private String commandPassword;
+    
+    @Value("${spring.datasource.query.url}")
+    private String queryUrl;
+    
+    @Value("${spring.datasource.query.username}")
+    private String queryUsername;
+    
+    @Value("${spring.datasource.query.password}")
+    private String queryPassword;
+    
     /**
      * Command Database (Write Side) - Primary
      */
     @Primary
     @Bean(name = "commandDataSource")
-    @ConfigurationProperties(prefix = "spring.datasource")
     public DataSource commandDataSource() {
-        return DataSourceBuilder.create().build();
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl(commandUrl);
+        config.setUsername(commandUsername);
+        config.setPassword(commandPassword);
+        config.setDriverClassName("com.mysql.cj.jdbc.Driver");
+        config.setMaximumPoolSize(20);
+        config.setMinimumIdle(5);
+        config.setIdleTimeout(300000);
+        config.setConnectionTimeout(20000);
+        return new HikariDataSource(config);
     }
     
     /**
      * Query Database (Read Side)
      */
     @Bean(name = "queryDataSource")
-    @ConfigurationProperties(prefix = "spring.datasource.query")
     public DataSource queryDataSource() {
-        return DataSourceBuilder.create().build();
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl(queryUrl);
+        config.setUsername(queryUsername);
+        config.setPassword(queryPassword);
+        config.setDriverClassName("com.mysql.cj.jdbc.Driver");
+        config.setMaximumPoolSize(50);
+        config.setMinimumIdle(10);
+        config.setIdleTimeout(300000);
+        config.setConnectionTimeout(20000);
+        return new HikariDataSource(config);
     }
     
     /**
