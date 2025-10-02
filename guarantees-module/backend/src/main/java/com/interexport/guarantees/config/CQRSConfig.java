@@ -33,6 +33,10 @@ import java.util.Properties;
         "com.interexport.guarantees.repository",
         "com.interexport.guarantees.cqrs.command"
     },
+    excludeFilters = @org.springframework.context.annotation.ComponentScan.Filter(
+        type = org.springframework.context.annotation.FilterType.REGEX,
+        pattern = "com\\.interexport\\.guarantees\\.repository\\.query\\..*"
+    ),
     entityManagerFactoryRef = "commandEntityManagerFactory",
     transactionManagerRef = "commandTransactionManager"
 )
