@@ -28,6 +28,14 @@ import java.util.Properties;
  */
 @Configuration
 @Profile("cqrs")
+@EnableJpaRepositories(
+    basePackages = {
+        "com.interexport.guarantees.repository",
+        "com.interexport.guarantees.cqrs.command"
+    },
+    entityManagerFactoryRef = "commandEntityManagerFactory",
+    transactionManagerRef = "commandTransactionManager"
+)
 public class CQRSConfig {
     
     @Value("${spring.datasource.url}")
