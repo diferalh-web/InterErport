@@ -1,0 +1,168 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Set up Node.js 18
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: guarantees-module/frontend/package-lock.json
+
+    - name: Cache Maven dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+
+    - name: Build backend
+      run: |
+        cd guarantees-module/backend
+        mvn clean package -DskipTests
+
+    - name: Build frontend
+      run: |
+        cd guarantees-module/frontend
+        npm ci
+        npm run build
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Extract version from tag or input
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          VERSION="${{ github.event.inputs.version }}"
+        else
+          VERSION="${{ github.ref_name }}"
+        fi
+        
+        # Generate changelog from git commits
+        echo "## What's Changed" > CHANGELOG.md
+        echo "" >> CHANGELOG.md
+        
+        # Get commits since last tag
+        if git describe --tags --abbrev=0 HEAD~1 >/dev/null 2>&1; then
+          LAST_TAG=$(git describe --tags --abbrev=0 HEAD~1)
+          git log --pretty=format:"- %s (%h)" ${LAST_TAG}..HEAD >> CHANGELOG.md
+        else
+          git log --pretty=format:"- %s (%h)" --max-count=20 >> CHANGELOG.md
+        fi
+        
+        echo "" >> CHANGELOG.md
+        echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${LAST_TAG}...${VERSION}" >> CHANGELOG.md
+        
+        # Output changelog for use in release
+        echo "changelog<<EOF" >> $GITHUB_OUTPUT
+        cat CHANGELOG.md >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref_name || github.event.inputs.version }}
+        release_name: Release ${{ github.ref_name || github.event.inputs.version }}
+        body: ${{ steps.changelog.outputs.changelog }}
+        draft: false
+        prerelease: false
+
+    - name: Upload Backend Artifacts
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./guarantees-module/backend/target/guarantees-module-1.0.0-POC.jar
+        asset_name: guarantees-module-backend-${{ github.ref_name || github.event.inputs.version }}.jar
+        asset_content_type: application/java-archive
+
+    - name: Upload Frontend Artifacts
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./guarantees-module/frontend/build
+        asset_name: guarantees-module-frontend-${{ github.ref_name || github.event.inputs.version }}.zip
+        asset_content_type: application/zip
+
+    - name: Create Docker Images
+      run: |
+        # Build and tag Docker images
+        docker build -t diferalh-web/guarantees-backend:${{ github.ref_name || github.event.inputs.version }} ./guarantees-module/backend
+        docker build -t diferalh-web/guarantees-frontend:${{ github.ref_name || github.event.inputs.version }} ./guarantees-module/frontend
+        
+        # Tag as latest if this is not a pre-release
+        if [[ "${{ github.ref_name || github.event.inputs.version }}" != *"-"* ]]; then
+          docker tag diferalh-web/guarantees-backend:${{ github.ref_name || github.event.inputs.version }} diferalh-web/guarantees-backend:latest
+          docker tag diferalh-web/guarantees-frontend:${{ github.ref_name || github.event.inputs.version }} diferalh-web/guarantees-frontend:latest
+        fi
+
+    - name: Push Docker Images
+      run: |
+        echo ${{ secrets.DOCKER_PASSWORD }} | docker login -u ${{ secrets.DOCKER_USERNAME }} --password-stdin
+        docker push diferalh-web/guarantees-backend:${{ github.ref_name || github.event.inputs.version }}
+        docker push diferalh-web/guarantees-frontend:${{ github.ref_name || github.event.inputs.version }}
+        
+        # Push latest tag if not pre-release
+        if [[ "${{ github.ref_name || github.event.inputs.version }}" != *"-"* ]]; then
+          docker push diferalh-web/guarantees-backend:latest
+          docker push diferalh-web/guarantees-frontend:latest
+        fi
+
+    - name: Update Version Numbers
+      run: |
+        # Update version in pom.xml
+        cd guarantees-module/backend
+        VERSION="${{ github.ref_name || github.event.inputs.version }}"
+        VERSION_NUMBER=${VERSION#v}  # Remove 'v' prefix
+        sed -i "s/<version>.*<\/version>/<version>${VERSION_NUMBER}<\/version>/" pom.xml
+        
+        # Update version in package.json
+        cd ../frontend
+        sed -i "s/\"version\": \".*\"/\"version\": \"${VERSION_NUMBER}\"/" package.json
+        
+        # Commit version updates
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add .
+        git commit -m "Bump version to ${VERSION}" || exit 0
+        git push
+
+    - name: Notify Release
+      run: |
+        echo "Release ${{ github.ref_name || github.event.inputs.version }} created successfully!"
+        echo "Docker images:"
+        echo "- diferalh-web/guarantees-backend:${{ github.ref_name || github.event.inputs.version }}"
+        echo "- diferalh-web/guarantees-frontend:${{ github.ref_name || github.event.inputs.version }}"
+        
+        # Add notification logic here (Slack, email, etc.)

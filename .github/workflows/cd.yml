@@ -1,0 +1,196 @@
+name: CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Deploy to Staging
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    environment: staging
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=sha,prefix=staging-
+
+    - name: Build and push backend image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./guarantees-module/backend
+        push: true
+        tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:staging-${{ github.sha }}
+        labels: ${{ steps.meta.outputs.labels }}
+
+    - name: Build and push frontend image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./guarantees-module/frontend
+        push: true
+        tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:staging-${{ github.sha }}
+        labels: ${{ steps.meta.outputs.labels }}
+
+    - name: Deploy to staging environment
+      run: |
+        echo "Deploying to staging environment..."
+        # Add your deployment logic here
+        # This could be Kubernetes, Docker Swarm, or cloud provider specific commands
+        # Example for Kubernetes:
+        # kubectl set image deployment/guarantees-backend backend=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:staging-${{ github.sha }}
+        # kubectl set image deployment/guarantees-frontend frontend=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:staging-${{ github.sha }}
+
+    - name: Run smoke tests
+      run: |
+        echo "Running smoke tests against staging environment..."
+        # Add smoke test commands here
+        # curl -f http://staging.example.com/health || exit 1
+
+    - name: Notify deployment success
+      run: |
+        echo "Successfully deployed to staging environment"
+
+  # Deploy to Production
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    environment: production
+    needs: [deploy-staging]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=tag
+          type=sha,prefix=prod-
+
+    - name: Build and push backend image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./guarantees-module/backend
+        push: true
+        tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:production-${{ github.sha }}
+        labels: ${{ steps.meta.outputs.labels }}
+
+    - name: Build and push frontend image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./guarantees-module/frontend
+        push: true
+        tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:production-${{ github.sha }}
+        labels: ${{ steps.meta.outputs.labels }}
+
+    - name: Deploy to production environment
+      run: |
+        echo "Deploying to production environment..."
+        # Add your production deployment logic here
+        # This should include blue-green deployment or rolling updates
+        # kubectl set image deployment/guarantees-backend backend=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:production-${{ github.sha }}
+        # kubectl set image deployment/guarantees-frontend frontend=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:production-${{ github.sha }}
+
+    - name: Run production smoke tests
+      run: |
+        echo "Running smoke tests against production environment..."
+        # Add production smoke test commands here
+        # curl -f https://api.production.example.com/health || exit 1
+
+    - name: Create GitHub Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref_name }}
+        release_name: Release ${{ github.ref_name }}
+        body: |
+          ## Changes in this Release
+          - Automated deployment to production
+          - Backend version: ${{ github.sha }}
+          - Frontend version: ${{ github.sha }}
+          
+          ## Docker Images
+          - Backend: `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:production-${{ github.sha }}`
+          - Frontend: `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:production-${{ github.sha }}`
+        draft: false
+        prerelease: false
+
+    - name: Notify deployment success
+      run: |
+        echo "Successfully deployed to production environment"
+        # Add notification logic here (Slack, email, etc.)
+
+  # Rollback job (manual trigger)
+  rollback:
+    name: Rollback Deployment
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'rollback'
+    environment: production
+
+    steps:
+    - name: Rollback deployment
+      run: |
+        echo "Rolling back deployment..."
+        # Add rollback logic here
+        # kubectl rollout undo deployment/guarantees-backend
+        # kubectl rollout undo deployment/guarantees-frontend
+
+    - name: Verify rollback
+      run: |
+        echo "Verifying rollback..."
+        # Add verification logic here
+        # curl -f https://api.production.example.com/health || exit 1
+
+    - name: Notify rollback completion
+      run: |
+        echo "Rollback completed successfully"
