@@ -5,6 +5,7 @@ import com.interexport.guarantees.entity.enums.WorkflowStatus;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import lombok.ToString;
 
 import java.time.LocalDateTime;
 
@@ -15,7 +16,8 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "workflow_tasks")
 @Data
-@EqualsAndHashCode(callSuper = true)
+@EqualsAndHashCode(callSuper = true, exclude = "workflowExecution")
+@ToString(exclude = "workflowExecution")
 public class WorkflowTask extends BaseEntity {
 
     @ManyToOne(fetch = FetchType.LAZY)

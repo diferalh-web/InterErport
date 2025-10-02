@@ -1,13 +1,16 @@
 package com.interexport.guarantees.cqrs.command;
 
 import com.interexport.guarantees.cqrs.event.GuaranteeCreatedEvent;
-import com.interexport.guarantees.entity.Guarantee;
-import com.interexport.guarantees.repository.GuaranteeRepository;
+import com.interexport.guarantees.entity.GuaranteeContract;
+import com.interexport.guarantees.entity.enums.GuaranteeStatus;
+import com.interexport.guarantees.entity.enums.GuaranteeType;
+import com.interexport.guarantees.repository.GuaranteeContractRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -18,11 +21,11 @@ import java.util.UUID;
 @Component
 public class GuaranteeCommandHandler {
     
-    private final GuaranteeRepository guaranteeRepository;
+    private final GuaranteeContractRepository guaranteeRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     
     @Autowired
-    public GuaranteeCommandHandler(GuaranteeRepository guaranteeRepository, 
+    public GuaranteeCommandHandler(GuaranteeContractRepository guaranteeRepository, 
                                  KafkaTemplate<String, Object> kafkaTemplate) {
         this.guaranteeRepository = guaranteeRepository;
         this.kafkaTemplate = kafkaTemplate;
@@ -34,9 +37,9 @@ public class GuaranteeCommandHandler {
         validateCommand(command);
         
         // Create guarantee entity
-        Guarantee guarantee = new Guarantee();
+        GuaranteeContract guarantee = new GuaranteeContract();
         guarantee.setReference(command.getReference());
-        guarantee.setGuaranteeType(command.getGuaranteeType());
+        guarantee.setGuaranteeType(GuaranteeType.valueOf(command.getGuaranteeType()));
         guarantee.setAmount(command.getAmount());
         guarantee.setCurrency(command.getCurrency());
         guarantee.setIssueDate(command.getIssueDate());
@@ -45,18 +48,18 @@ public class GuaranteeCommandHandler {
         guarantee.setApplicantId(command.getApplicantId());
         guarantee.setGuaranteeText(command.getGuaranteeText());
         guarantee.setLanguage(command.getLanguage());
-        guarantee.setStatus("DRAFT");
-        guarantee.setCreatedAt(LocalDateTime.now());
-        guarantee.setUpdatedAt(LocalDateTime.now());
+        guarantee.setStatus(GuaranteeStatus.DRAFT);
+        guarantee.setCreatedDate(LocalDateTime.now());
+        guarantee.setLastModifiedDate(LocalDateTime.now());
         
         // Save to command database
-        Guarantee savedGuarantee = guaranteeRepository.save(guarantee);
+        GuaranteeContract savedGuarantee = guaranteeRepository.save(guarantee);
         
         // Publish event to Kafka
         GuaranteeCreatedEvent event = new GuaranteeCreatedEvent(
             savedGuarantee.getId().toString(),
             savedGuarantee.getReference(),
-            savedGuarantee.getGuaranteeType(),
+            savedGuarantee.getGuaranteeType().name(),
             savedGuarantee.getAmount(),
             savedGuarantee.getCurrency(),
             savedGuarantee.getIssueDate(),
@@ -65,8 +68,8 @@ public class GuaranteeCommandHandler {
             savedGuarantee.getApplicantId(),
             savedGuarantee.getGuaranteeText(),
             savedGuarantee.getLanguage(),
-            savedGuarantee.getStatus(),
-            savedGuarantee.getCreatedAt()
+            savedGuarantee.getStatus().name(),
+            savedGuarantee.getCreatedDate()
         );
         
         kafkaTemplate.send("guarantee-created", savedGuarantee.getId().toString(), event);

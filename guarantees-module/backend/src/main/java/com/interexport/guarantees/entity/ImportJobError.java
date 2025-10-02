@@ -3,6 +3,7 @@ package com.interexport.guarantees.entity;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import lombok.ToString;
 
 import java.time.LocalDateTime;
 
@@ -13,7 +14,8 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "import_job_errors")
 @Data
-@EqualsAndHashCode(callSuper = true)
+@EqualsAndHashCode(callSuper = true, exclude = "importJob")
+@ToString(exclude = "importJob")
 public class ImportJobError extends BaseEntity {
 
     @ManyToOne(fetch = FetchType.LAZY)
