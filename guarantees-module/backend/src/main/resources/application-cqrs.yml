@@ -4,8 +4,8 @@ spring:
   
   # Command Database (Write Side) - Normalized
   datasource:
-    url: jdbc:mysql://localhost:3306/guarantees_command_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
-    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${COMMAND_DB_URL:jdbc:mysql://localhost:3306/guarantees_command_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}
+    driverClassName: com.mysql.cj.jdbc.Driver
     username: ${COMMAND_DB_USERNAME:guarantees_command_user}
     password: ${COMMAND_DB_PASSWORD:guarantees_command_pass}
     hikari:
@@ -13,6 +13,17 @@ spring:
       minimum-idle: 5
       idle-timeout: 300000
       connection-timeout: 20000
+    # Query Database (Read Side) - Denormalized
+    query:
+      url: ${QUERY_DB_URL:jdbc:mysql://localhost:3306/guarantees_query_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}
+      driverClassName: com.mysql.cj.jdbc.Driver
+      username: ${QUERY_DB_USERNAME:guarantees_query_user}
+      password: ${QUERY_DB_PASSWORD:guarantees_query_pass}
+      hikari:
+        maximum-pool-size: 50
+        minimum-idle: 10
+        idle-timeout: 300000
+        connection-timeout: 20000
       
   jpa:
     hibernate:
@@ -24,19 +35,6 @@ spring:
         format_sql: true
         jdbc:
           time_zone: UTC
-          
-  # Query Database (Read Side) - Denormalized
-  datasource:
-    query:
-      url: jdbc:mysql://localhost:3306/guarantees_query_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
-      driver-class-name: com.mysql.cj.jdbc.Driver
-      username: ${QUERY_DB_USERNAME:guarantees_query_user}
-      password: ${QUERY_DB_PASSWORD:guarantees_query_pass}
-      hikari:
-        maximum-pool-size: 50
-        minimum-idle: 10
-        idle-timeout: 300000
-        connection-timeout: 20000
 
   # Kafka Configuration
   kafka:
