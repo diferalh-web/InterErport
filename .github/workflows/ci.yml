@@ -1,0 +1,247 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  JAVA_VERSION: '17'
+  NODE_VERSION: '18'
+  MAVEN_OPTS: '-Xmx1024m'
+
+jobs:
+  # Backend CI Job
+  backend-ci:
+    name: Backend CI
+    runs-on: ubuntu-latest
+    
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: guarantees_test
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+      
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK ${{ env.JAVA_VERSION }}
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: 'temurin'
+
+    - name: Cache Maven dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+
+    - name: Run Maven clean install
+      run: |
+        cd guarantees-module/backend
+        mvn clean install -DskipTests
+
+    - name: Run unit tests
+      run: |
+        cd guarantees-module/backend
+        mvn test
+
+    - name: Run integration tests
+      run: |
+        cd guarantees-module/backend
+        mvn verify -P integration-test
+
+    - name: Generate test coverage report
+      run: |
+        cd guarantees-module/backend
+        mvn jacoco:report
+
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./guarantees-module/backend/target/site/jacoco/jacoco.xml
+        flags: backend
+        name: backend-coverage
+
+    - name: Run SonarQube analysis
+      uses: sonarqube-quality-gate-action@v1.0.1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      with:
+        args: >
+          -Dsonar.projectKey=interexport-guarantees-backend
+          -Dsonar.organization=interexport
+          -Dsonar.host.url=https://sonarcloud.io
+          -Dsonar.sources=guarantees-module/backend/src/main/java
+          -Dsonar.tests=guarantees-module/backend/src/test/java
+          -Dsonar.java.binaries=guarantees-module/backend/target/classes
+          -Dsonar.coverage.jacoco.xmlReportPaths=guarantees-module/backend/target/site/jacoco/jacoco.xml
+
+  # Frontend CI Job
+  frontend-ci:
+    name: Frontend CI
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js ${{ env.NODE_VERSION }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: guarantees-module/frontend/package-lock.json
+
+    - name: Install dependencies
+      run: |
+        cd guarantees-module/frontend
+        npm ci
+
+    - name: Run ESLint
+      run: |
+        cd guarantees-module/frontend
+        npm run lint
+
+    - name: Run unit tests
+      run: |
+        cd guarantees-module/frontend
+        npm test -- --coverage --watchAll=false
+
+    - name: Build application
+      run: |
+        cd guarantees-module/frontend
+        npm run build
+
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./guarantees-module/frontend/coverage/lcov.info
+        flags: frontend
+        name: frontend-coverage
+
+  # Swift Platform CI Job
+  swift-platform-ci:
+    name: Swift Platform CI
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js ${{ env.NODE_VERSION }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: swift-test-platform/package-lock.json
+
+    - name: Install dependencies
+      run: |
+        cd swift-test-platform
+        npm ci
+
+    - name: Run tests
+      run: |
+        cd swift-test-platform
+        npm test
+
+  # Security Scanning
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: [backend-ci, frontend-ci]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  # Build and Push Docker Images
+  docker-build:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [backend-ci, frontend-ci]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: |
+          diferalh-web/guarantees-backend
+          diferalh-web/guarantees-frontend
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push backend image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./guarantees-module/backend
+        push: true
+        tags: diferalh-web/guarantees-backend:${{ github.sha }}
+        labels: ${{ steps.meta.outputs.labels }}
+
+    - name: Build and push frontend image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./guarantees-module/frontend
+        push: true
+        tags: diferalh-web/guarantees-frontend:${{ github.sha }}
+        labels: ${{ steps.meta.outputs.labels }}
+
+  # Notify on failure
+  notify-failure:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: [backend-ci, frontend-ci, swift-platform-ci, security-scan]
+    if: failure()
+
+    steps:
+    - name: Notify failure
+      run: |
+        echo "CI Pipeline failed. Please check the logs for details."
+        # Add notification logic here (Slack, email, etc.)
