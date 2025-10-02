@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SWIFT Test Platform - InterExport Guarantees</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
+    <style>
+        .message-box {
+            transition: all 0.3s ease;
+        }
+        .message-box:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+        .status-SENT { background-color: #10b981; }
+        .status-RECEIVED { background-color: #3b82f6; }
+        .status-FAILED { background-color: #ef4444; }
+        .status-PENDING { background-color: #f59e0b; }
+        
+        .direction-INCOMING { border-left: 4px solid #3b82f6; }
+        .direction-OUTGOING { border-left: 4px solid #10b981; }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .5; }
+        }
+        .animate-pulse-custom { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <!-- Header -->
+    <header class="bg-blue-900 text-white shadow-lg">
+        <div class="container mx-auto px-6 py-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-4">
+                    <i class="fas fa-exchange-alt text-2xl"></i>
+                    <div>
+                        <h1 class="text-xl font-bold">SWIFT Test Platform</h1>
+                        <p class="text-blue-200 text-sm">InterExport Guarantee Module Testing</p>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div id="connectionStatus" class="flex items-center space-x-2">
+                        <span class="status-indicator status-PENDING animate-pulse-custom"></span>
+                        <span class="text-sm">Connecting...</span>
+                    </div>
+                    <button id="clearMessages" class="bg-red-600 hover:bg-red-700 px-3 py-1 rounded text-sm">
+                        <i class="fas fa-trash"></i> Clear All
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="container mx-auto px-6 py-8">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Left Column - Message Composer -->
+            <div class="lg:col-span-1 space-y-6">
+                <!-- Quick Actions -->
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <h2 class="text-lg font-semibold mb-4">
+                        <i class="fas fa-rocket text-blue-600"></i> Quick Actions
+                    </h2>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button onclick="loadScenario('guarantee-issuance')" class="bg-green-500 hover:bg-green-600 text-white px-3 py-2 rounded text-sm">
+                            <i class="fas fa-plus"></i> Issue Guarantee
+                        </button>
+                        <button onclick="loadScenario('guarantee-amendment')" class="bg-yellow-500 hover:bg-yellow-600 text-white px-3 py-2 rounded text-sm">
+                            <i class="fas fa-edit"></i> Amendment
+                        </button>
+                        <button onclick="loadScenario('claim-process')" class="bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded text-sm">
+                            <i class="fas fa-exclamation-triangle"></i> Claim
+                        </button>
+                        <button onclick="loadScenario('discrepancy-handling')" class="bg-purple-500 hover:bg-purple-600 text-white px-3 py-2 rounded text-sm">
+                            <i class="fas fa-question-circle"></i> Discrepancy
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Message Composer -->
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <h2 class="text-lg font-semibold mb-4">
+                        <i class="fas fa-paper-plane text-blue-600"></i> Send SWIFT Message
+                    </h2>
+                    <form id="messageForm">
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Message Type</label>
+                                <select id="messageType" class="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="MT760">MT760 - Issue of Guarantee</option>
+                                    <option value="MT765">MT765 - Amendment to Guarantee</option>
+                                    <option value="MT767">MT767 - Confirmation of Amendment</option>
+                                    <option value="MT768">MT768 - Acknowledgment</option>
+                                    <option value="MT769">MT769 - Advice of Discrepancy</option>
+                                    <option value="MT798">MT798 - Free Format Message</option>
+                                </select>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">Sender BIC</label>
+                                    <input type="text" id="senderBIC" class="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500" value="INTEXPORXXXX" placeholder="BANKUSNYXXXX">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">Receiver BIC</label>
+                                    <input type="text" id="receiverBIC" class="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500" value="BNKSGSGXXXX" placeholder="BNKSGSGXXXX">
+                                </div>
+                            </div>
+
+                            <!-- Dynamic Fields Container -->
+                            <div id="dynamicFields" class="space-y-4">
+                                <!-- Fields will be populated based on message type -->
+                            </div>
+
+                            <div class="flex space-x-3">
+                                <button type="button" id="validateBtn" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
+                                    <i class="fas fa-check-circle mr-2"></i> Validate
+                                </button>
+                                <button type="submit" id="sendBtn" class="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded">
+                                    <i class="fas fa-paper-plane mr-2"></i> Send
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Statistics -->
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <h2 class="text-lg font-semibold mb-4">
+                        <i class="fas fa-chart-bar text-blue-600"></i> Statistics
+                    </h2>
+                    <div id="statistics" class="space-y-2">
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Total Messages:</span>
+                            <span id="statTotal" class="font-semibold">0</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Sent:</span>
+                            <span id="statSent" class="text-green-600 font-semibold">0</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Received:</span>
+                            <span id="statReceived" class="text-blue-600 font-semibold">0</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Failed:</span>
+                            <span id="statFailed" class="text-red-600 font-semibold">0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column - Message Feed and Details -->
+            <div class="lg:col-span-2 space-y-6">
+                <!-- Filters and Search -->
+                <div class="bg-white rounded-lg shadow-lg p-4">
+                    <div class="flex flex-wrap items-center justify-between gap-4">
+                        <div class="flex items-center space-x-4">
+                            <div>
+                                <select id="filterType" class="p-2 border border-gray-300 rounded text-sm">
+                                    <option value="">All Types</option>
+                                    <option value="MT760">MT760</option>
+                                    <option value="MT765">MT765</option>
+                                    <option value="MT767">MT767</option>
+                                    <option value="MT768">MT768</option>
+                                    <option value="MT769">MT769</option>
+                                </select>
+                            </div>
+                            <div>
+                                <select id="filterDirection" class="p-2 border border-gray-300 rounded text-sm">
+                                    <option value="">All Directions</option>
+                                    <option value="INCOMING">Incoming</option>
+                                    <option value="OUTGOING">Outgoing</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <input type="text" id="searchInput" placeholder="Search messages..." class="p-2 border border-gray-300 rounded text-sm w-64">
+                            <button id="searchBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded text-sm">
+                                <i class="fas fa-search"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Message Feed -->
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-lg font-semibold">
+                            <i class="fas fa-stream text-blue-600"></i> Message Feed
+                        </h2>
+                        <div class="flex items-center space-x-2">
+                            <div id="liveIndicator" class="flex items-center space-x-2 text-green-600">
+                                <span class="status-indicator status-SENT animate-pulse-custom"></span>
+                                <span class="text-sm font-medium">Live</span>
+                            </div>
+                            <button id="refreshBtn" class="bg-gray-500 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm">
+                                <i class="fas fa-sync-alt"></i> Refresh
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div id="messagesFeed" class="space-y-3 max-h-96 overflow-y-auto">
+                        <div class="text-center text-gray-500 py-8">
+                            <i class="fas fa-inbox text-3xl mb-4"></i>
+                            <p>No messages yet. Send a message to get started!</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Message Details -->
+                <div id="messageDetails" class="bg-white rounded-lg shadow-lg p-6 hidden">
+                    <h2 class="text-lg font-semibold mb-4">
+                        <i class="fas fa-info-circle text-blue-600"></i> Message Details
+                    </h2>
+                    <div id="messageDetailsContent">
+                        <!-- Content will be populated dynamically -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Validation Results Modal -->
+    <div id="validationModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50">
+        <div class="flex items-center justify-center min-h-screen p-4">
+            <div class="bg-white rounded-lg p-6 max-w-2xl w-full max-h-96 overflow-y-auto">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold">Validation Results</h3>
+                    <button id="closeValidationModal" class="text-gray-500 hover:text-gray-700">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div id="validationResults">
+                    <!-- Validation results will be populated here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toastContainer" class="fixed top-4 right-4 space-y-2 z-40">
+        <!-- Toast notifications will be added here -->
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
+
+
+
+

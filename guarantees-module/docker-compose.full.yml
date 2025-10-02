@@ -1,0 +1,238 @@
+version: '3.8'
+
+services:
+  # Command Database (Write Side)
+  mysql-command:
+    image: mysql:8.0
+    container_name: guarantees-mysql-command
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: guarantees_command_db
+      MYSQL_USER: guarantees_command_user
+      MYSQL_PASSWORD: guarantees_command_pass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_command_data:/var/lib/mysql
+      - ./setup-cqrs-databases.sql:/docker-entrypoint-initdb.d/setup-cqrs-databases.sql
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - guarantees-network
+
+  # Query Database (Read Side)
+  mysql-query:
+    image: mysql:8.0
+    container_name: guarantees-mysql-query
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: guarantees_query_db
+      MYSQL_USER: guarantees_query_user
+      MYSQL_PASSWORD: guarantees_query_pass
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_query_data:/var/lib/mysql
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - guarantees-network
+
+  # Zookeeper for Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: guarantees-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+    networks:
+      - guarantees-network
+
+  # Kafka
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: guarantees-kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - guarantees-network
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: guarantees-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --requirepass redispassword
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redispassword", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - guarantees-network
+
+  # Kafka UI
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: guarantees-kafka-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - guarantees-network
+
+  # Redis Commander
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: guarantees-redis-commander
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379:0:redispassword
+    networks:
+      - guarantees-network
+
+  # Backend Application
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: guarantees-backend
+    depends_on:
+      mysql-command:
+        condition: service_healthy
+      mysql-query:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8082:8080"
+    environment:
+      # Command Database
+      COMMAND_DB_USERNAME: guarantees_command_user
+      COMMAND_DB_PASSWORD: guarantees_command_pass
+      COMMAND_DB_URL: jdbc:mysql://mysql-command:3306/guarantees_command_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      
+      # Query Database
+      QUERY_DB_USERNAME: guarantees_query_user
+      QUERY_DB_PASSWORD: guarantees_query_pass
+      QUERY_DB_URL: jdbc:mysql://mysql-query:3306/guarantees_query_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      
+      # Kafka
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: redispassword
+      
+      # Spring Profile
+      SPRING_PROFILES_ACTIVE: cqrs
+      
+      # JVM Options
+      JAVA_OPTS: -Xmx512m -Xms256m
+    volumes:
+      - ./backend/logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - guarantees-network
+
+  # Frontend Application
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: guarantees-frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8082/api/v1
+      - REACT_APP_CQRS_API_URL=http://localhost:8082/api/v1/cqrs
+    networks:
+      - guarantees-network
+
+  # Database Admin (phpMyAdmin)
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    container_name: guarantees-phpmyadmin
+    depends_on:
+      mysql-command:
+        condition: service_healthy
+      mysql-query:
+        condition: service_healthy
+    ports:
+      - "8083:80"
+    environment:
+      PMA_ARBITRARY: 1
+      PMA_HOSTS: mysql-command,mysql-query
+      PMA_VERBOSE: Command DB,Query DB
+      PMA_USER: root
+      PMA_PASSWORD: rootpassword
+    networks:
+      - guarantees-network
+
+volumes:
+  mysql_command_data:
+  mysql_query_data:
+  zookeeper_data:
+  zookeeper_logs:
+  kafka_data:
+  redis_data:
+
+networks:
+  guarantees-network:
+    driver: bridge

@@ -1,0 +1,382 @@
+package com.interexport.guarantees.service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.interexport.guarantees.entity.GuaranteeContract;
+import com.interexport.guarantees.entity.WorkflowTask;
+import com.interexport.guarantees.entity.enums.WorkflowStep;
+import com.interexport.guarantees.repository.GuaranteeContractRepository;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.Tracer;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * Workflow Task Executor Service for F11 Kafka Workflow
+ * Implements the actual business logic for each workflow step
+ */
+@Service
+@Slf4j
+public class WorkflowTaskExecutorService {
+
+    @Autowired
+    private GuaranteeContractRepository guaranteeContractRepository;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @Autowired
+    private Tracer tracer;
+
+    // These would be injected in a real implementation
+    // @Autowired private CommissionService commissionService;
+    // @Autowired private NotificationService notificationService;
+    // @Autowired private AccountingService accountingService;
+    // @Autowired private SwiftMessageService swiftMessageService;
+    // @Autowired private EmailService emailService;
+    // @Autowired private AuditService auditService;
+
+    /**
+     * Execute a workflow task based on its step type
+     */
+    public String executeTask(WorkflowTask task, Map<String, Object> message) throws Exception {
+        Span span = tracer.nextSpan().name("workflow-step-" + task.getStep().name().toLowerCase())
+                .setAttribute("task.id", task.getTaskId())
+                .setAttribute("step", task.getStep().name())
+                .start();
+
+        try {
+            log.info("Executing workflow step {} for task {}", task.getStep(), task.getTaskId());
+
+            // Get guarantee details
+            GuaranteeContract guarantee = task.getWorkflowExecution().getGuarantee();
+            guarantee = guaranteeContractRepository.findById(guarantee.getId())
+                    .orElseThrow(() -> new RuntimeException("Guarantee not found: " + guarantee.getId()));
+
+            // Execute based on step type
+            String result = switch (task.getStep()) {
+                case COLLECT_COMMISSION -> executeCollectCommission(task, guarantee, message);
+                case SEND_NOTIFICATION -> executeSendNotification(task, guarantee, message);
+                case UPDATE_ACCOUNTING -> executeUpdateAccounting(task, guarantee, message);
+                case GENERATE_SWIFT -> executeGenerateSwift(task, guarantee, message);
+                case UPDATE_EXTERNAL_SYSTEM -> executeUpdateExternalSystem(task, guarantee, message);
+                case ARCHIVE_DOCUMENTS -> executeArchiveDocuments(task, guarantee, message);
+                case SEND_EMAIL_CONFIRMATION -> executeSendEmailConfirmation(task, guarantee, message);
+                case LOG_AUDIT_TRAIL -> executeLogAuditTrail(task, guarantee, message);
+            };
+
+            log.info("Successfully executed workflow step {} for task {}", task.getStep(), task.getTaskId());
+            return result;
+
+        } catch (Exception e) {
+            log.error("Failed to execute workflow step {} for task {}: {}", 
+                    task.getStep(), task.getTaskId(), e.getMessage(), e);
+            throw e;
+        } finally {
+            span.end();
+        }
+    }
+
+    /**
+     * COLLECT_COMMISSION - Calculate and collect commission for the guarantee
+     */
+    private String executeCollectCommission(WorkflowTask task, GuaranteeContract guarantee, Map<String, Object> message) 
+            throws Exception {
+        log.info("Collecting commission for guarantee {}", guarantee.getId());
+
+        // Simulate commission calculation (in real implementation, this would be more complex)
+        BigDecimal commissionRate = new BigDecimal("0.005"); // 0.5%
+        BigDecimal commissionAmount = guarantee.getAmount().multiply(commissionRate)
+                .setScale(2, RoundingMode.HALF_UP);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("commissionRate", commissionRate.toString());
+        result.put("commissionAmount", commissionAmount.toString());
+        result.put("currency", guarantee.getCurrency());
+        result.put("collectedAt", LocalDateTime.now().toString());
+        result.put("status", "COLLECTED");
+
+        // Simulate API call delay
+        simulateProcessingDelay(2000);
+
+        // In a real implementation, this would:
+        // 1. Call external payment system
+        // 2. Update financial records
+        // 3. Generate commission invoices
+        // commissionService.collectCommission(guarantee.getId(), commissionAmount);
+
+        log.info("Commission {} {} collected for guarantee {}", 
+                commissionAmount, guarantee.getCurrency(), guarantee.getId());
+
+        return objectMapper.writeValueAsString(result);
+    }
+
+    /**
+     * SEND_NOTIFICATION - Send notifications to relevant parties
+     */
+    private String executeSendNotification(WorkflowTask task, GuaranteeContract guarantee, Map<String, Object> message) 
+            throws Exception {
+        log.info("Sending notifications for guarantee {}", guarantee.getId());
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("notificationsSent", 0);
+        result.put("recipients", new HashMap<String, Object>());
+
+        // Simulate sending notifications to different parties
+        Map<String, Object> recipients = (Map<String, Object>) result.get("recipients");
+
+        // Notify beneficiary
+        if (guarantee.getBeneficiaryEmail() != null && !guarantee.getBeneficiaryEmail().isEmpty()) {
+            recipients.put("beneficiary", Map.of(
+                    "email", guarantee.getBeneficiaryEmail(),
+                    "status", "SENT",
+                    "sentAt", LocalDateTime.now().toString()
+            ));
+            result.put("notificationsSent", (Integer) result.get("notificationsSent") + 1);
+        }
+
+        // Notify applicant
+        if (guarantee.getApplicantEmail() != null && !guarantee.getApplicantEmail().isEmpty()) {
+            recipients.put("applicant", Map.of(
+                    "email", guarantee.getApplicantEmail(),
+                    "status", "SENT",
+                    "sentAt", LocalDateTime.now().toString()
+            ));
+            result.put("notificationsSent", (Integer) result.get("notificationsSent") + 1);
+        }
+
+        // Notify internal teams
+        recipients.put("operations_team", Map.of(
+                "email", "operations@interexport.com",
+                "status", "SENT",
+                "sentAt", LocalDateTime.now().toString()
+        ));
+        result.put("notificationsSent", (Integer) result.get("notificationsSent") + 1);
+
+        simulateProcessingDelay(1500);
+
+        // In a real implementation:
+        // notificationService.sendGuaranteeApprovalNotifications(guarantee);
+
+        log.info("Sent {} notifications for guarantee {}", result.get("notificationsSent"), guarantee.getId());
+
+        return objectMapper.writeValueAsString(result);
+    }
+
+    /**
+     * UPDATE_ACCOUNTING - Update accounting systems with guarantee details
+     */
+    private String executeUpdateAccounting(WorkflowTask task, GuaranteeContract guarantee, Map<String, Object> message) 
+            throws Exception {
+        log.info("Updating accounting records for guarantee {}", guarantee.getId());
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("accountingEntries", new HashMap<String, Object>());
+
+        // Simulate accounting entries
+        Map<String, Object> entries = (Map<String, Object>) result.get("accountingEntries");
+
+        // Debit guarantee liability account
+        entries.put("guarantee_liability", Map.of(
+                "accountCode", "2100-001",
+                "debitAmount", guarantee.getAmount().toString(),
+                "currency", guarantee.getCurrency(),
+                "description", "Guarantee liability for " + guarantee.getGuaranteeReference()
+        ));
+
+        // Credit guarantee income account (commission)
+        BigDecimal commission = guarantee.getAmount().multiply(new BigDecimal("0.005"));
+        entries.put("commission_income", Map.of(
+                "accountCode", "4200-001",
+                "creditAmount", commission.toString(),
+                "currency", guarantee.getCurrency(),
+                "description", "Commission income for " + guarantee.getGuaranteeReference()
+        ));
+
+        result.put("updatedAt", LocalDateTime.now().toString());
+        result.put("status", "UPDATED");
+
+        simulateProcessingDelay(3000);
+
+        // In a real implementation:
+        // accountingService.createGuaranteeAccountingEntries(guarantee);
+
+        log.info("Updated accounting records for guarantee {}", guarantee.getId());
+
+        return objectMapper.writeValueAsString(result);
+    }
+
+    /**
+     * GENERATE_SWIFT - Generate and send SWIFT messages
+     */
+    private String executeGenerateSwift(WorkflowTask task, GuaranteeContract guarantee, Map<String, Object> message) 
+            throws Exception {
+        log.info("Generating SWIFT message for guarantee {}", guarantee.getId());
+
+        Map<String, Object> result = new HashMap<>();
+        
+        // Simulate SWIFT MT760 message generation
+        String swiftMessage = generateMT760Message(guarantee);
+        
+        result.put("messageType", "MT760");
+        result.put("senderReference", "INT" + System.currentTimeMillis());
+        result.put("receiverReference", guarantee.getGuaranteeReference());
+        result.put("messageLength", swiftMessage.length());
+        result.put("sentAt", LocalDateTime.now().toString());
+        result.put("status", "SENT");
+
+        simulateProcessingDelay(2500);
+
+        // In a real implementation:
+        // swiftMessageService.sendMT760(guarantee);
+
+        log.info("Generated and sent SWIFT MT760 for guarantee {}", guarantee.getId());
+
+        return objectMapper.writeValueAsString(result);
+    }
+
+    /**
+     * UPDATE_EXTERNAL_SYSTEM - Update external systems (CRM, ERP, etc.)
+     */
+    private String executeUpdateExternalSystem(WorkflowTask task, GuaranteeContract guarantee, Map<String, Object> message) 
+            throws Exception {
+        log.info("Updating external systems for guarantee {}", guarantee.getId());
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("systemsUpdated", new HashMap<String, Object>());
+
+        Map<String, Object> systems = (Map<String, Object>) result.get("systemsUpdated");
+
+        // Update CRM system
+        systems.put("CRM", Map.of(
+                "system", "SalesForce",
+                "recordId", "GNT-" + guarantee.getId(),
+                "status", "UPDATED",
+                "updatedAt", LocalDateTime.now().toString()
+        ));
+
+        // Update ERP system
+        systems.put("ERP", Map.of(
+                "system", "SAP",
+                "documentNumber", guarantee.getGuaranteeReference(),
+                "status", "UPDATED",
+                "updatedAt", LocalDateTime.now().toString()
+        ));
+
+        simulateProcessingDelay(4000);
+
+        log.info("Updated external systems for guarantee {}", guarantee.getId());
+
+        return objectMapper.writeValueAsString(result);
+    }
+
+    /**
+     * ARCHIVE_DOCUMENTS - Archive guarantee documents
+     */
+    private String executeArchiveDocuments(WorkflowTask task, GuaranteeContract guarantee, Map<String, Object> message) 
+            throws Exception {
+        log.info("Archiving documents for guarantee {}", guarantee.getId());
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("documentsArchived", 3);
+        result.put("archiveLocation", "/archives/guarantees/" + guarantee.getGuaranteeReference());
+        result.put("archivedAt", LocalDateTime.now().toString());
+        result.put("retentionPeriod", "7 years");
+
+        simulateProcessingDelay(1000);
+
+        log.info("Archived documents for guarantee {}", guarantee.getId());
+
+        return objectMapper.writeValueAsString(result);
+    }
+
+    /**
+     * SEND_EMAIL_CONFIRMATION - Send final email confirmations
+     */
+    private String executeSendEmailConfirmation(WorkflowTask task, GuaranteeContract guarantee, Map<String, Object> message) 
+            throws Exception {
+        log.info("Sending email confirmations for guarantee {}", guarantee.getId());
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("emailsSent", 2);
+        result.put("recipients", Map.of(
+                "beneficiary", guarantee.getBeneficiaryEmail() != null ? guarantee.getBeneficiaryEmail() : "N/A",
+                "applicant", guarantee.getApplicantEmail() != null ? guarantee.getApplicantEmail() : "N/A"
+        ));
+        result.put("sentAt", LocalDateTime.now().toString());
+
+        simulateProcessingDelay(1500);
+
+        log.info("Sent email confirmations for guarantee {}", guarantee.getId());
+
+        return objectMapper.writeValueAsString(result);
+    }
+
+    /**
+     * LOG_AUDIT_TRAIL - Create final audit trail entry
+     */
+    private String executeLogAuditTrail(WorkflowTask task, GuaranteeContract guarantee, Map<String, Object> message) 
+            throws Exception {
+        log.info("Creating audit trail for guarantee {}", guarantee.getId());
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("auditEntryId", "AUD-" + System.currentTimeMillis());
+        result.put("event", "GUARANTEE_WORKFLOW_COMPLETED");
+        result.put("guaranteeId", guarantee.getId());
+        result.put("guaranteeReference", guarantee.getGuaranteeReference());
+        result.put("timestamp", LocalDateTime.now().toString());
+        result.put("workflowExecutionId", task.getWorkflowExecution().getExecutionId());
+
+        simulateProcessingDelay(500);
+
+        log.info("Created audit trail entry for guarantee {}", guarantee.getId());
+
+        return objectMapper.writeValueAsString(result);
+    }
+
+    /**
+     * Generate simplified MT760 SWIFT message
+     */
+    private String generateMT760Message(GuaranteeContract guarantee) {
+        return String.format(
+                "{1:F01INTEXPOXXXXX0000000000}{2:I760BNKSGSGXXXX}{3:{108:MT760}}{4:\n" +
+                ":20:%s\n" +
+                ":23:ISSU\n" +
+                ":31C:%s\n" +
+                ":31E:%s\n" +
+                ":32B:%s%s,\n" +
+                ":50:%s\n" +
+                ":59:%s\n" +
+                ":77C:GUARANTEE TEXT\n" +
+                "-}{5:{CHK:ABCDEF123456}}",
+                guarantee.getGuaranteeReference(),
+                guarantee.getIssueDate(),
+                guarantee.getExpiryDate(),
+                guarantee.getCurrency(),
+                guarantee.getAmount(),
+                guarantee.getApplicantName(),
+                guarantee.getBeneficiaryName()
+        );
+    }
+
+    /**
+     * Simulate processing delay to make the workflow more realistic
+     */
+    private void simulateProcessingDelay(long milliseconds) {
+        try {
+            TimeUnit.MILLISECONDS.sleep(milliseconds);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Processing delay interrupted");
+        }
+    }
+}
+
+

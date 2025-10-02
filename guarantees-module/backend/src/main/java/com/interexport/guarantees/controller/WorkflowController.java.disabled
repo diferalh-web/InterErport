@@ -1,0 +1,286 @@
+package com.interexport.guarantees.controller;
+
+import com.interexport.guarantees.entity.GuaranteeContract;
+import com.interexport.guarantees.entity.WorkflowExecution;
+import com.interexport.guarantees.entity.WorkflowTask;
+import com.interexport.guarantees.entity.enums.WorkflowStatus;
+import com.interexport.guarantees.repository.GuaranteeContractRepository;
+import com.interexport.guarantees.repository.WorkflowExecutionRepository;
+import com.interexport.guarantees.repository.WorkflowTaskRepository;
+import com.interexport.guarantees.service.WorkflowEngineService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+/**
+ * REST Controller for F11 Kafka Workflow Management
+ * Provides endpoints for workflow monitoring and management
+ */
+@RestController
+@RequestMapping("/api/v1/workflows")
+@Tag(name = "Workflow Management", description = "F11 Kafka Workflow Engine endpoints")
+public class WorkflowController {
+
+    @Autowired
+    private WorkflowEngineService workflowEngineService;
+
+    @Autowired
+    private WorkflowExecutionRepository workflowExecutionRepository;
+
+    @Autowired
+    private WorkflowTaskRepository workflowTaskRepository;
+
+    @Autowired
+    private GuaranteeContractRepository guaranteeContractRepository;
+
+    /**
+     * Start a post-approval workflow for a guarantee
+     */
+    @PostMapping("/guarantees/{guaranteeId}/start-post-approval")
+    @Operation(summary = "Start Post-Approval Workflow", description = "Initiates the post-approval workflow for a guarantee")
+    public ResponseEntity<WorkflowExecution> startPostApprovalWorkflow(
+            @Parameter(description = "Guarantee ID") @PathVariable Long guaranteeId) {
+        
+        Optional<GuaranteeContract> guaranteeOpt = guaranteeContractRepository.findById(guaranteeId);
+        if (guaranteeOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        WorkflowExecution execution = workflowEngineService.startPostApprovalWorkflow(guaranteeOpt.get());
+        return ResponseEntity.ok(execution);
+    }
+
+    /**
+     * Get workflow execution by execution ID
+     */
+    @GetMapping("/executions/{executionId}")
+    @Operation(summary = "Get Workflow Execution", description = "Retrieve workflow execution details by execution ID")
+    public ResponseEntity<WorkflowExecution> getWorkflowExecution(
+            @Parameter(description = "Workflow Execution ID") @PathVariable String executionId) {
+        
+        Optional<WorkflowExecution> execution = workflowEngineService.getWorkflowExecution(executionId);
+        return execution.map(ResponseEntity::ok).orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * Get all workflow executions for a guarantee
+     */
+    @GetMapping("/guarantees/{guaranteeId}/executions")
+    @Operation(summary = "Get Guarantee Workflows", description = "Retrieve all workflow executions for a guarantee")
+    public ResponseEntity<List<WorkflowExecution>> getWorkflowExecutionsForGuarantee(
+            @Parameter(description = "Guarantee ID") @PathVariable Long guaranteeId) {
+        
+        List<WorkflowExecution> executions = workflowEngineService.getWorkflowExecutionsForGuarantee(guaranteeId);
+        return ResponseEntity.ok(executions);
+    }
+
+    /**
+     * Get workflow tasks for an execution
+     */
+    @GetMapping("/executions/{executionId}/tasks")
+    @Operation(summary = "Get Workflow Tasks", description = "Retrieve all tasks for a workflow execution")
+    public ResponseEntity<List<WorkflowTask>> getWorkflowTasks(
+            @Parameter(description = "Workflow Execution ID") @PathVariable String executionId) {
+        
+        Optional<WorkflowExecution> executionOpt = workflowExecutionRepository.findByExecutionId(executionId);
+        if (executionOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        List<WorkflowTask> tasks = workflowTaskRepository.findByWorkflowExecutionIdOrderByStepOrder(
+                executionOpt.get().getId());
+        return ResponseEntity.ok(tasks);
+    }
+
+    /**
+     * Get workflow execution statistics
+     */
+    @GetMapping("/stats")
+    @Operation(summary = "Get Workflow Statistics", description = "Retrieve workflow execution statistics")
+    public ResponseEntity<Map<String, Object>> getWorkflowStatistics() {
+        Map<String, Object> stats = new HashMap<>();
+
+        // Execution stats by status
+        Map<String, Long> executionStats = new HashMap<>();
+        for (WorkflowStatus status : WorkflowStatus.values()) {
+            executionStats.put(status.name(), workflowExecutionRepository.countByStatus(status));
+        }
+        stats.put("executionsByStatus", executionStats);
+
+        // Task stats by status
+        Map<String, Long> taskStats = new HashMap<>();
+        for (WorkflowStatus status : WorkflowStatus.values()) {
+            taskStats.put(status.name(), workflowTaskRepository.countByStatus(status));
+        }
+        stats.put("tasksByStatus", taskStats);
+
+        // Active executions
+        List<WorkflowExecution> activeExecutions = workflowExecutionRepository.findActiveExecutions();
+        stats.put("activeExecutions", activeExecutions.size());
+
+        // Tasks in DLQ
+        List<WorkflowTask> dlqTasks = workflowTaskRepository.findByStatus(WorkflowStatus.DLQ);
+        stats.put("dlqTasks", dlqTasks.size());
+
+        return ResponseEntity.ok(stats);
+    }
+
+    /**
+     * Get tasks requiring manual intervention (DLQ)
+     */
+    @GetMapping("/dlq-tasks")
+    @Operation(summary = "Get DLQ Tasks", description = "Retrieve tasks in Dead Letter Queue requiring manual intervention")
+    public ResponseEntity<List<WorkflowTask>> getDLQTasks() {
+        List<WorkflowTask> dlqTasks = workflowTaskRepository.findByStatus(WorkflowStatus.DLQ);
+        return ResponseEntity.ok(dlqTasks);
+    }
+
+    /**
+     * Get tasks with high retry counts
+     */
+    @GetMapping("/high-retry-tasks")
+    @Operation(summary = "Get High Retry Tasks", description = "Retrieve tasks with high retry counts for monitoring")
+    public ResponseEntity<List<WorkflowTask>> getHighRetryTasks(
+            @Parameter(description = "Minimum retry count threshold") @RequestParam(defaultValue = "2") int threshold) {
+        
+        List<WorkflowTask> highRetryTasks = workflowTaskRepository.findTasksWithHighRetryCount(threshold);
+        return ResponseEntity.ok(highRetryTasks);
+    }
+
+    /**
+     * Retry a specific workflow task manually
+     */
+    @PostMapping("/tasks/{taskId}/retry")
+    @Operation(summary = "Retry Task", description = "Manually retry a failed workflow task")
+    public ResponseEntity<Map<String, String>> retryTask(
+            @Parameter(description = "Task ID") @PathVariable String taskId) {
+        
+        Optional<WorkflowTask> taskOpt = workflowTaskRepository.findByTaskId(taskId);
+        if (taskOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        WorkflowTask task = taskOpt.get();
+        
+        // Reset task for retry
+        if (task.getStatus() == WorkflowStatus.DLQ || task.getStatus() == WorkflowStatus.FAILED) {
+            task.setStatus(WorkflowStatus.PENDING);
+            task.setRetryCount(0); // Reset retry count for manual retry
+            task.setErrorDetails(null);
+            workflowTaskRepository.save(task);
+
+            // Schedule for execution
+            workflowEngineService.scheduleNextTask(task.getWorkflowExecution());
+
+            Map<String, String> response = new HashMap<>();
+            response.put("status", "SCHEDULED");
+            response.put("message", "Task has been scheduled for retry");
+            return ResponseEntity.ok(response);
+        } else {
+            Map<String, String> response = new HashMap<>();
+            response.put("status", "ERROR");
+            response.put("message", "Task is not in a retryable state: " + task.getStatus());
+            return ResponseEntity.badRequest().body(response);
+        }
+    }
+
+    /**
+     * Cancel a workflow execution
+     */
+    @PostMapping("/executions/{executionId}/cancel")
+    @Operation(summary = "Cancel Workflow", description = "Cancel a workflow execution and its pending tasks")
+    public ResponseEntity<Map<String, String>> cancelWorkflow(
+            @Parameter(description = "Workflow Execution ID") @PathVariable String executionId) {
+        
+        Optional<WorkflowExecution> executionOpt = workflowExecutionRepository.findByExecutionId(executionId);
+        if (executionOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        WorkflowExecution execution = executionOpt.get();
+        
+        if (execution.getStatus() == WorkflowStatus.COMPLETED || 
+            execution.getStatus() == WorkflowStatus.CANCELLED) {
+            Map<String, String> response = new HashMap<>();
+            response.put("status", "ERROR");
+            response.put("message", "Workflow is already completed or cancelled");
+            return ResponseEntity.badRequest().body(response);
+        }
+
+        // Cancel the execution
+        execution.setStatus(WorkflowStatus.CANCELLED);
+        workflowExecutionRepository.save(execution);
+
+        // Cancel all pending tasks
+        List<WorkflowTask> pendingTasks = workflowTaskRepository.findByWorkflowExecutionIdAndStatus(
+                execution.getId(), WorkflowStatus.PENDING);
+        
+        for (WorkflowTask task : pendingTasks) {
+            task.setStatus(WorkflowStatus.CANCELLED);
+        }
+        workflowTaskRepository.saveAll(pendingTasks);
+
+        Map<String, String> response = new HashMap<>();
+        response.put("status", "CANCELLED");
+        response.put("message", String.format("Workflow cancelled with %d pending tasks", pendingTasks.size()));
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Get workflow health check
+     */
+    @GetMapping("/health")
+    @Operation(summary = "Workflow Health Check", description = "Check the health of the workflow system")
+    public ResponseEntity<Map<String, Object>> getWorkflowHealth() {
+        Map<String, Object> health = new HashMap<>();
+
+        try {
+            // Check active executions
+            long activeCount = workflowExecutionRepository.findActiveExecutions().size();
+            health.put("activeExecutions", activeCount);
+
+            // Check DLQ size
+            long dlqCount = workflowTaskRepository.countByStatus(WorkflowStatus.DLQ);
+            health.put("dlqTasks", dlqCount);
+
+            // Check tasks ready for execution
+            List<WorkflowTask> readyTasks = workflowTaskRepository.findTasksReadyForExecution(
+                    java.time.LocalDateTime.now());
+            health.put("readyTasks", readyTasks.size());
+
+            // Check tasks ready for retry
+            List<WorkflowTask> retryTasks = workflowTaskRepository.findTasksReadyForRetry(
+                    java.time.LocalDateTime.now());
+            health.put("retryTasks", retryTasks.size());
+
+            // Determine overall health status
+            String status = "HEALTHY";
+            if (dlqCount > 50) {
+                status = "WARNING";
+            }
+            if (dlqCount > 100 || activeCount > 1000) {
+                status = "CRITICAL";
+            }
+
+            health.put("status", status);
+            health.put("timestamp", java.time.LocalDateTime.now());
+
+            return ResponseEntity.ok(health);
+
+        } catch (Exception e) {
+            health.put("status", "ERROR");
+            health.put("error", e.getMessage());
+            return ResponseEntity.internalServerError().body(health);
+        }
+    }
+}
+
+

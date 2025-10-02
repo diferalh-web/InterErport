@@ -1,0 +1,427 @@
+package com.interexport.guarantees.service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.interexport.guarantees.entity.GuaranteeContract;
+import com.interexport.guarantees.entity.WorkflowExecution;
+import com.interexport.guarantees.entity.WorkflowTask;
+import com.interexport.guarantees.entity.enums.WorkflowStep;
+import com.interexport.guarantees.entity.enums.WorkflowStatus;
+import com.interexport.guarantees.repository.WorkflowExecutionRepository;
+import com.interexport.guarantees.repository.WorkflowTaskRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.Tracer;
+import jakarta.transaction.Transactional;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
+
+/**
+ * Workflow Engine Service for F11 Kafka Workflow
+ * Orchestrates post-approval workflows with retry mechanisms and DLQ handling
+ */
+@Service
+@Slf4j
+public class WorkflowEngineService {
+
+    @Autowired
+    private WorkflowExecutionRepository workflowExecutionRepository;
+
+    @Autowired
+    private WorkflowTaskRepository workflowTaskRepository;
+
+    @Autowired
+    private KafkaTemplate<String, Object> kafkaTemplate;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @Autowired
+    private Tracer tracer;
+
+    @Autowired
+    private MeterRegistry meterRegistry;
+
+    // Metrics
+    private final Counter workflowStartedCounter;
+    private final Counter workflowCompletedCounter;
+    private final Counter workflowFailedCounter;
+    private final Counter taskExecutedCounter;
+    private final Counter taskRetriedCounter;
+    private final Counter dlqCounter;
+    private final Timer workflowExecutionTimer;
+
+    // Kafka topics
+    private static final String WORKFLOW_TOPIC = "guarantee-workflow";
+    private static final String RETRY_TOPIC = "guarantee-workflow-retry";
+    private static final String DLQ_TOPIC = "guarantee-workflow-dlq";
+
+    public WorkflowEngineService(MeterRegistry meterRegistry) {
+        this.workflowStartedCounter = Counter.builder("workflow.started")
+                .description("Number of workflows started")
+                .register(meterRegistry);
+        
+        this.workflowCompletedCounter = Counter.builder("workflow.completed")
+                .description("Number of workflows completed")
+                .register(meterRegistry);
+                
+        this.workflowFailedCounter = Counter.builder("workflow.failed")
+                .description("Number of workflows failed")
+                .register(meterRegistry);
+                
+        this.taskExecutedCounter = Counter.builder("workflow.task.executed")
+                .description("Number of workflow tasks executed")
+                .register(meterRegistry);
+                
+        this.taskRetriedCounter = Counter.builder("workflow.task.retried")
+                .description("Number of workflow task retries")
+                .register(meterRegistry);
+                
+        this.dlqCounter = Counter.builder("workflow.task.dlq")
+                .description("Number of tasks sent to DLQ")
+                .register(meterRegistry);
+                
+        this.workflowExecutionTimer = Timer.builder("workflow.execution.duration")
+                .description("Workflow execution duration")
+                .register(meterRegistry);
+    }
+
+    /**
+     * Start a post-approval workflow for a guarantee
+     */
+    @Transactional
+    public WorkflowExecution startPostApprovalWorkflow(GuaranteeContract guarantee) {
+        Span span = tracer.spanBuilder("workflow-start").startSpan();
+        
+        try {
+            String executionId = UUID.randomUUID().toString();
+            
+            WorkflowExecution execution = new WorkflowExecution();
+            execution.setExecutionId(executionId);
+            execution.setGuarantee(guarantee);
+            execution.setStatus(WorkflowStatus.PENDING);
+            execution.setWorkflowType("POST_APPROVAL");
+            execution.setTriggerEvent("GUARANTEE_APPROVED");
+            execution.setScheduledAt(LocalDateTime.now());
+            execution.setTraceId(span.getSpanContext().getTraceId());
+            execution.setSpanId(span.getSpanContext().getSpanId());
+
+            // Define workflow steps for post-approval
+            List<WorkflowStep> steps = Arrays.asList(
+                    WorkflowStep.COLLECT_COMMISSION,
+                    WorkflowStep.SEND_NOTIFICATION,
+                    WorkflowStep.UPDATE_ACCOUNTING,
+                    WorkflowStep.GENERATE_SWIFT,
+                    WorkflowStep.SEND_EMAIL_CONFIRMATION,
+                    WorkflowStep.LOG_AUDIT_TRAIL
+            );
+
+            execution.setTotalSteps(steps.size());
+            execution.setCompletedSteps(0);
+            execution.setFailedSteps(0);
+
+            // Store workflow definition as JSON
+            Map<String, Object> workflowDef = new HashMap<>();
+            workflowDef.put("steps", steps);
+            workflowDef.put("parallel", false); // Sequential execution for now
+            execution.setWorkflowDefinition(objectMapper.writeValueAsString(workflowDef));
+
+            // Create execution context
+            Map<String, Object> context = new HashMap<>();
+            context.put("guaranteeId", guarantee.getId());
+            context.put("guaranteeReference", guarantee.getGuaranteeReference());
+            context.put("amount", guarantee.getAmount());
+            context.put("currency", guarantee.getCurrency());
+            execution.setExecutionContext(objectMapper.writeValueAsString(context));
+
+            // Save workflow execution
+            execution = workflowExecutionRepository.save(execution);
+
+            // Create individual tasks
+            for (int i = 0; i < steps.size(); i++) {
+                WorkflowTask task = createWorkflowTask(execution, steps.get(i), i + 1);
+                execution.addTask(task);
+            }
+
+            workflowTaskRepository.saveAll(execution.getTasks());
+            
+            // Send first task to Kafka
+            scheduleNextTask(execution);
+            
+            workflowStartedCounter.increment();
+            log.info("Started post-approval workflow {} for guarantee {}", executionId, guarantee.getId());
+            
+            return execution;
+            
+        } catch (Exception e) {
+            log.error("Failed to start workflow for guarantee {}: {}", guarantee.getId(), e.getMessage(), e);
+            throw new RuntimeException("Failed to start workflow", e);
+        } finally {
+            span.end();
+        }
+    }
+
+    /**
+     * Create a workflow task
+     */
+    private WorkflowTask createWorkflowTask(WorkflowExecution execution, WorkflowStep step, int order) {
+        WorkflowTask task = new WorkflowTask();
+        task.setTaskId(UUID.randomUUID().toString());
+        task.setWorkflowExecution(execution);
+        task.setStep(step);
+        task.setStatus(WorkflowStatus.PENDING);
+        task.setStepOrder(order);
+        task.setStepDescription(step.getDescription());
+        task.setScheduledAt(LocalDateTime.now());
+        task.setTraceId(execution.getTraceId());
+        task.setParentSpanId(execution.getSpanId());
+        
+        // Set step-specific parameters
+        Map<String, Object> inputParams = new HashMap<>();
+        inputParams.put("step", step.name());
+        inputParams.put("guaranteeId", execution.getGuarantee().getId());
+        inputParams.put("executionId", execution.getExecutionId());
+        
+        try {
+            task.setInputParameters(objectMapper.writeValueAsString(inputParams));
+        } catch (Exception e) {
+            log.warn("Failed to serialize input parameters for task {}: {}", task.getTaskId(), e.getMessage());
+        }
+        
+        return task;
+    }
+
+    /**
+     * Schedule the next pending task for execution
+     */
+    @Transactional
+    public void scheduleNextTask(WorkflowExecution execution) {
+        Optional<WorkflowTask> nextTask = workflowTaskRepository.findNextPendingTask(execution.getId());
+        
+        if (nextTask.isPresent()) {
+            WorkflowTask task = nextTask.get();
+            
+            // Create Kafka message
+            Map<String, Object> message = new HashMap<>();
+            message.put("taskId", task.getTaskId());
+            message.put("executionId", execution.getExecutionId());
+            message.put("step", task.getStep().name());
+            message.put("guaranteeId", execution.getGuarantee().getId());
+            message.put("traceId", task.getTraceId());
+            message.put("attempt", task.getProcessingAttempts() + 1);
+            
+            // Send to Kafka
+            String messageKey = execution.getExecutionId() + ":" + task.getStepOrder();
+            CompletableFuture<SendResult<String, Object>> future = kafkaTemplate.send(WORKFLOW_TOPIC, messageKey, message);
+            
+            future.whenComplete((result, ex) -> {
+                if (ex != null) {
+                    log.error("Failed to send task {} to Kafka: {}", task.getTaskId(), ex.getMessage(), ex);
+                    markTaskAsFailed(task, "Failed to send to Kafka: " + ex.getMessage());
+                } else {
+                    log.debug("Successfully sent task {} to Kafka topic {}", task.getTaskId(), WORKFLOW_TOPIC);
+                    task.setKafkaTopic(WORKFLOW_TOPIC);
+                    task.setKafkaPartition(String.valueOf(result.getRecordMetadata().partition()));
+                    task.setKafkaOffset(String.valueOf(result.getRecordMetadata().offset()));
+                    task.setMessageKey(messageKey);
+                    workflowTaskRepository.save(task);
+                }
+            });
+        } else {
+            // No more pending tasks - check if workflow is complete
+            checkWorkflowCompletion(execution);
+        }
+    }
+
+    /**
+     * Mark a task as failed and handle retries or DLQ
+     */
+    @Transactional
+    public void markTaskAsFailed(WorkflowTask task, String errorMessage) {
+        task.setErrorDetails(errorMessage);
+        task.setCompletedAt(LocalDateTime.now());
+        
+        if (task.canRetry()) {
+            task.incrementRetry();
+            taskRetriedCounter.increment();
+            log.info("Task {} failed, scheduling retry #{} at {}", 
+                    task.getTaskId(), task.getRetryCount(), task.getNextRetryAt());
+        } else {
+            task.setStatus(WorkflowStatus.DLQ);
+            dlqCounter.increment();
+            log.error("Task {} sent to DLQ after {} retries: {}", 
+                    task.getTaskId(), task.getRetryCount(), errorMessage);
+            
+            // Send to DLQ topic
+            sendToDLQ(task, errorMessage);
+            
+            // Update workflow execution
+            WorkflowExecution execution = task.getWorkflowExecution();
+            execution.setFailedSteps(execution.getFailedSteps() + 1);
+            workflowExecutionRepository.save(execution);
+        }
+        
+        workflowTaskRepository.save(task);
+    }
+
+    /**
+     * Mark a task as completed and schedule next task
+     */
+    @Transactional
+    public void markTaskAsCompleted(WorkflowTask task, String result) {
+        task.setStatus(WorkflowStatus.COMPLETED);
+        task.setOutputResult(result);
+        task.setCompletedAt(LocalDateTime.now());
+        
+        if (task.getStartedAt() != null) {
+            task.setExecutionDurationMs(
+                java.time.Duration.between(task.getStartedAt(), task.getCompletedAt()).toMillis()
+            );
+        }
+        
+        workflowTaskRepository.save(task);
+        taskExecutedCounter.increment();
+        
+        // Update workflow execution
+        WorkflowExecution execution = task.getWorkflowExecution();
+        execution.setCompletedSteps(execution.getCompletedSteps() + 1);
+        workflowExecutionRepository.save(execution);
+        
+        log.info("Task {} completed successfully", task.getTaskId());
+        
+        // Schedule next task
+        scheduleNextTask(execution);
+    }
+
+    /**
+     * Check if workflow execution is complete
+     */
+    private void checkWorkflowCompletion(WorkflowExecution execution) {
+        long pendingTasks = workflowTaskRepository.countByWorkflowExecutionIdAndStatus(
+                execution.getId(), WorkflowStatus.PENDING);
+        long inProgressTasks = workflowTaskRepository.countByWorkflowExecutionIdAndStatus(
+                execution.getId(), WorkflowStatus.IN_PROGRESS);
+        long retryingTasks = workflowTaskRepository.countByWorkflowExecutionIdAndStatus(
+                execution.getId(), WorkflowStatus.RETRYING);
+        
+        if (pendingTasks == 0 && inProgressTasks == 0 && retryingTasks == 0) {
+            // Workflow is complete
+            execution.setCompletedAt(LocalDateTime.now());
+            
+            if (execution.getFailedSteps() > 0) {
+                execution.setStatus(WorkflowStatus.FAILED);
+                workflowFailedCounter.increment();
+                log.warn("Workflow {} completed with {} failed steps", 
+                        execution.getExecutionId(), execution.getFailedSteps());
+            } else {
+                execution.setStatus(WorkflowStatus.COMPLETED);
+                workflowCompletedCounter.increment();
+                log.info("Workflow {} completed successfully", execution.getExecutionId());
+            }
+            
+            // Record execution time
+            if (execution.getStartedAt() != null) {
+                workflowExecutionTimer.record(
+                    java.time.Duration.between(execution.getStartedAt(), execution.getCompletedAt())
+                );
+            }
+            
+            workflowExecutionRepository.save(execution);
+        }
+    }
+
+    /**
+     * Send task to Dead Letter Queue
+     */
+    private void sendToDLQ(WorkflowTask task, String errorMessage) {
+        Map<String, Object> dlqMessage = new HashMap<>();
+        dlqMessage.put("taskId", task.getTaskId());
+        dlqMessage.put("executionId", task.getWorkflowExecution().getExecutionId());
+        dlqMessage.put("step", task.getStep().name());
+        dlqMessage.put("originalTopic", task.getKafkaTopic());
+        dlqMessage.put("errorMessage", errorMessage);
+        dlqMessage.put("retryCount", task.getRetryCount());
+        dlqMessage.put("failedAt", LocalDateTime.now().toString());
+        
+        kafkaTemplate.send(DLQ_TOPIC, task.getTaskId(), dlqMessage);
+    }
+
+    /**
+     * Scheduled job to process retryable tasks
+     */
+    @Scheduled(fixedDelay = 30000) // Every 30 seconds
+    @Async
+    public void processRetryableTasks() {
+        List<WorkflowTask> retryableTasks = workflowTaskRepository.findTasksReadyForRetry(LocalDateTime.now());
+        
+        for (WorkflowTask task : retryableTasks) {
+            log.info("Retrying task {} (attempt #{})", task.getTaskId(), task.getRetryCount() + 1);
+            
+            // Reset task status and schedule for execution
+            task.setStatus(WorkflowStatus.PENDING);
+            task.setScheduledAt(LocalDateTime.now());
+            workflowTaskRepository.save(task);
+            
+            // Send to retry topic
+            scheduleTaskForRetry(task);
+        }
+    }
+
+    /**
+     * Schedule task for retry
+     */
+    private void scheduleTaskForRetry(WorkflowTask task) {
+        Map<String, Object> message = new HashMap<>();
+        message.put("taskId", task.getTaskId());
+        message.put("executionId", task.getWorkflowExecution().getExecutionId());
+        message.put("step", task.getStep().name());
+        message.put("guaranteeId", task.getWorkflowExecution().getGuarantee().getId());
+        message.put("traceId", task.getTraceId());
+        message.put("attempt", task.getRetryCount() + 1);
+        message.put("isRetry", true);
+        
+        String messageKey = task.getWorkflowExecution().getExecutionId() + ":" + task.getStepOrder();
+        kafkaTemplate.send(RETRY_TOPIC, messageKey, message);
+    }
+
+    /**
+     * Handle task timeout
+     */
+    @Scheduled(fixedDelay = 60000) // Every minute
+    @Async
+    public void handleTaskTimeouts() {
+        LocalDateTime timeoutThreshold = LocalDateTime.now().minusMinutes(30); // 30-minute timeout
+        List<WorkflowTask> timedOutTasks = workflowTaskRepository.findTimedOutTasks(timeoutThreshold);
+        
+        for (WorkflowTask task : timedOutTasks) {
+            log.warn("Task {} timed out after 30 minutes", task.getTaskId());
+            markTaskAsFailed(task, "Task execution timed out");
+        }
+    }
+
+    /**
+     * Get workflow execution status
+     */
+    public Optional<WorkflowExecution> getWorkflowExecution(String executionId) {
+        return workflowExecutionRepository.findByExecutionId(executionId);
+    }
+
+    /**
+     * Get all workflow executions for a guarantee
+     */
+    public List<WorkflowExecution> getWorkflowExecutionsForGuarantee(Long guaranteeId) {
+        return workflowExecutionRepository.findByGuaranteeId(guaranteeId);
+    }
+}
+
+

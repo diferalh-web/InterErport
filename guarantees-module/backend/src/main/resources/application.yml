@@ -1,0 +1,219 @@
+spring:
+  application:
+    name: guarantees-module-poc
+  
+  # Database Configuration - MySQL for production-ready persistence
+  datasource:
+    url: jdbc:mysql://localhost:3306/guarantees_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: ${DATABASE_USERNAME:guarantees_user}
+    password: ${DATABASE_PASSWORD:guarantees_pass}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      idle-timeout: 300000
+      connection-timeout: 20000
+      
+  jpa:
+    hibernate:
+      ddl-auto: update  # Creates/updates tables automatically
+    show-sql: ${SHOW_SQL:false}  # Configurable SQL logging, default false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: true
+        jdbc:
+          time_zone: UTC
+        
+  # Jackson Configuration
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    time-zone: UTC
+    
+  # Security Configuration (Basic for POC)
+  security:
+    user:
+      name: admin
+      password: admin123
+      roles: ADMIN,USER
+      
+  # Redis Configuration
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 20
+          max-idle: 10
+          min-idle: 5
+          max-wait: 2000ms
+          
+  # Session Configuration
+  session:
+    store-type: redis
+    redis:
+      namespace: guarantees:session
+      flush-mode: on_save
+      
+  # Cache Configuration
+  cache:
+    type: redis
+    redis:
+      time-to-live: 1800000  # 30 minutes
+      cache-null-values: false
+      enable-statistics: true
+      
+  # Kafka Configuration for F11 Workflow Engine
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: guarantee-workflow-group
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      max-poll-records: 10
+      properties:
+        session.timeout.ms: 30000
+        heartbeat.interval.ms: 10000
+        spring.json.trusted.packages: "com.interexport.guarantees.*,java.util.*"
+    producer:
+      acks: all
+      retries: 3
+      properties:
+        retry.backoff.ms: 1000
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 1
+        batch.size: 16384
+        linger.ms: 50
+        buffer.memory: 33554432
+      
+# Server Configuration
+server:
+  port: 8080
+  servlet:
+    context-path: /api/v1
+
+# Actuator Configuration
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,tracing
+  endpoint:
+    health:
+      show-details: always
+  tracing:
+    sampling:
+      probability: 1.0  # 100% sampling for development
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+# OpenTelemetry Configuration for F11 Trace Correlation
+otel:
+  service:
+    name: ${spring.application.name}
+  exporter:
+    jaeger:
+      endpoint: ${JAEGER_ENDPOINT:http://localhost:14268/api/traces}
+  traces:
+    exporter: jaeger
+  metrics:
+    exporter: prometheus
+  logs:
+    exporter: none
+
+# OpenAPI Documentation
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+
+# Application Configuration
+app:
+  guarantees:
+    # Commission calculation settings
+    commission:
+      default-installments: 4
+      minimum-commission: 50.00
+      rounding-scale: 2
+    
+    # FX rate settings  
+    fx-rate:
+      base-currency: USD
+      cache-duration-minutes: 30
+      providers:
+        - MANUAL
+        - ECB
+        - BLOOMBERG
+      default-provider: MANUAL
+    
+    # Workflow settings for F11 Kafka Workflow Engine
+    workflow:
+      default-approval-timeout-hours: 24
+      retry-attempts: 3
+      backoff-delay-seconds: 30
+      max-execution-time-minutes: 30
+      dlq-threshold: 3
+      kafka:
+        topics:
+          workflow: guarantee-workflow
+          retry: guarantee-workflow-retry
+          dlq: guarantee-workflow-dlq
+        partitions: 3
+        replication-factor: 1
+    
+    # Alert settings
+    expiry-alert:
+      default-days-before: [7, 3, 1]
+      schedule-cron: "0 0 9 * * *"  # Daily at 9 AM
+
+# Logging Configuration
+logging:
+  level:
+    com.interexport.guarantees: DEBUG
+    org.springframework.security: DEBUG
+    org.hibernate.SQL: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+---
+# Production Profile
+spring:
+  config:
+    activate:
+      on-profile: production
+      
+  datasource:
+    url: ${DATABASE_URL:jdbc:mysql://localhost:3306/guarantees_db?useSSL=true&serverTimezone=UTC}
+    username: ${DATABASE_USERNAME:guarantees_user}
+    password: ${DATABASE_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 50
+      minimum-idle: 10
+      idle-timeout: 600000
+      connection-timeout: 30000
+    
+  jpa:
+    hibernate:
+      ddl-auto: validate  # Validate schema in production
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        jdbc:
+          time_zone: UTC
+
+logging:
+  level:
+    com.interexport.guarantees: INFO
+    org.springframework.security: WARN
+    org.hibernate.SQL: WARN

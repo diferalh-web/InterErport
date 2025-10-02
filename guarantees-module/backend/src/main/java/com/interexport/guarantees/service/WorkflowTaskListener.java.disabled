@@ -1,0 +1,211 @@
+package com.interexport.guarantees.service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.interexport.guarantees.entity.WorkflowTask;
+import com.interexport.guarantees.entity.enums.WorkflowStatus;
+import com.interexport.guarantees.repository.WorkflowTaskRepository;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.Tracer;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.support.Acknowledgment;
+import org.springframework.kafka.support.KafkaHeaders;
+import org.springframework.messaging.handler.annotation.Header;
+import org.springframework.messaging.handler.annotation.Payload;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
+import java.util.Map;
+import java.util.Optional;
+
+/**
+ * Kafka listeners for F11 Workflow Engine
+ * Processes workflow tasks from Kafka topics
+ */
+@Service
+@Slf4j
+public class WorkflowTaskListener {
+
+    @Autowired
+    private WorkflowTaskRepository workflowTaskRepository;
+
+    @Autowired
+    private WorkflowEngineService workflowEngineService;
+
+    @Autowired
+    private WorkflowTaskExecutorService workflowTaskExecutorService;
+
+    @Autowired
+    private Tracer tracer;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    /**
+     * Primary workflow task listener
+     */
+    @KafkaListener(
+            topics = "guarantee-workflow",
+            groupId = "guarantee-workflow-group",
+            containerFactory = "kafkaListenerContainerFactory"
+    )
+    @Transactional
+    public void processWorkflowTask(
+            @Payload Map<String, Object> message,
+            @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
+            @Header(KafkaHeaders.RECEIVED_PARTITION) Integer partition,
+            @Header(KafkaHeaders.OFFSET) Long offset,
+            Acknowledgment acknowledgment) {
+
+        String taskId = (String) message.get("taskId");
+        String traceId = (String) message.get("traceId");
+        
+        Span span = tracer.nextSpan().name("workflow-task-execution")
+                .setAttribute("task.id", taskId)
+                .setAttribute("kafka.topic", topic)
+                .setAttribute("kafka.partition", partition.toString())
+                .setAttribute("kafka.offset", offset.toString())
+                .start();
+
+        try {
+            log.info("Processing workflow task {} from topic {} partition {} offset {}", 
+                    taskId, topic, partition, offset);
+
+            Optional<WorkflowTask> taskOpt = workflowTaskRepository.findByTaskId(taskId);
+            if (taskOpt.isEmpty()) {
+                log.error("Workflow task not found: {}", taskId);
+                acknowledgment.acknowledge();
+                return;
+            }
+
+            WorkflowTask task = taskOpt.get();
+            
+            // Check if task is already processed or in wrong state
+            if (task.getStatus() != WorkflowStatus.PENDING) {
+                log.warn("Task {} is not in PENDING state, current status: {}", taskId, task.getStatus());
+                acknowledgment.acknowledge();
+                return;
+            }
+
+            // Mark task as in progress
+            task.setStatus(WorkflowStatus.IN_PROGRESS);
+            task.setStartedAt(LocalDateTime.now());
+            task.setProcessingAttempts(task.getProcessingAttempts() + 1);
+            workflowTaskRepository.save(task);
+
+            // Execute the task
+            String result = workflowTaskExecutorService.executeTask(task, message);
+            
+            // Mark as completed
+            workflowEngineService.markTaskAsCompleted(task, result);
+            
+            // Acknowledge message
+            acknowledgment.acknowledge();
+            
+            log.info("Successfully processed workflow task {}", taskId);
+
+        } catch (Exception e) {
+            log.error("Failed to process workflow task {}: {}", taskId, e.getMessage(), e);
+            
+            // Mark task as failed and handle retries
+            Optional<WorkflowTask> taskOpt = workflowTaskRepository.findByTaskId(taskId);
+            if (taskOpt.isPresent()) {
+                workflowEngineService.markTaskAsFailed(taskOpt.get(), e.getMessage());
+            }
+            
+            // Acknowledge the message to prevent reprocessing by Kafka
+            acknowledgment.acknowledge();
+            
+        } finally {
+            span.end();
+        }
+    }
+
+    /**
+     * Retry workflow task listener
+     */
+    @KafkaListener(
+            topics = "guarantee-workflow-retry",
+            groupId = "guarantee-workflow-group-retry",
+            containerFactory = "retryKafkaListenerContainerFactory"
+    )
+    @Transactional
+    public void processRetryWorkflowTask(
+            @Payload Map<String, Object> message,
+            @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
+            @Header(KafkaHeaders.RECEIVED_PARTITION) Integer partition,
+            @Header(KafkaHeaders.OFFSET) Long offset,
+            Acknowledgment acknowledgment) {
+
+        String taskId = (String) message.get("taskId");
+        Integer attempt = (Integer) message.get("attempt");
+        
+        log.info("Processing retry workflow task {} (attempt {}) from topic {} partition {} offset {}", 
+                taskId, attempt, topic, partition, offset);
+
+        // Process the same way as regular tasks but with additional retry logging
+        processWorkflowTask(message, topic, partition, offset, acknowledgment);
+    }
+
+    /**
+     * Dead Letter Queue listener for manual intervention
+     */
+    @KafkaListener(
+            topics = "guarantee-workflow-dlq",
+            groupId = "guarantee-workflow-group-dlq",
+            containerFactory = "dlqKafkaListenerContainerFactory"
+    )
+    @Transactional
+    public void processDLQMessage(
+            @Payload Map<String, Object> message,
+            @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
+            @Header(KafkaHeaders.RECEIVED_PARTITION) Integer partition,
+            @Header(KafkaHeaders.OFFSET) Long offset,
+            Acknowledgment acknowledgment) {
+
+        String taskId = (String) message.get("taskId");
+        String errorMessage = (String) message.get("errorMessage");
+        Integer retryCount = (Integer) message.get("retryCount");
+        
+        log.error("DLQ message received for task {} after {} retries. Error: {}", 
+                taskId, retryCount, errorMessage);
+
+        try {
+            // Store DLQ message details for manual intervention
+            Optional<WorkflowTask> taskOpt = workflowTaskRepository.findByTaskId(taskId);
+            if (taskOpt.isPresent()) {
+                WorkflowTask task = taskOpt.get();
+                
+                // Update task with DLQ information
+                String dlqInfo = String.format("DLQ Message - Topic: %s, Partition: %d, Offset: %d, Retries: %d", 
+                        topic, partition, offset, retryCount);
+                
+                if (task.getErrorDetails() != null) {
+                    task.setErrorDetails(task.getErrorDetails() + "\n" + dlqInfo);
+                } else {
+                    task.setErrorDetails(dlqInfo);
+                }
+                
+                workflowTaskRepository.save(task);
+                
+                log.info("Updated task {} with DLQ information", taskId);
+            }
+            
+            // TODO: Implement notification system for DLQ messages
+            // This could include:
+            // - Sending alerts to administrators
+            // - Creating tickets in external systems
+            // - Updating monitoring dashboards
+            
+            acknowledgment.acknowledge();
+            
+        } catch (Exception e) {
+            log.error("Failed to process DLQ message for task {}: {}", taskId, e.getMessage(), e);
+            // Don't acknowledge if we can't process DLQ message
+        }
+    }
+}
+
+

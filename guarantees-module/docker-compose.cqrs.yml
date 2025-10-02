@@ -1,0 +1,104 @@
+version: '3.8'
+
+services:
+  # Command Database (Write Side)
+  mysql-command:
+    image: mysql:8.0
+    container_name: guarantees-mysql-command
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: guarantees_command_db
+      MYSQL_USER: guarantees_command_user
+      MYSQL_PASSWORD: guarantees_command_pass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_command_data:/var/lib/mysql
+      - ./setup-cqrs-databases.sql:/docker-entrypoint-initdb.d/setup-cqrs-databases.sql
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Query Database (Read Side)
+  mysql-query:
+    image: mysql:8.0
+    container_name: guarantees-mysql-query
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: guarantees_query_db
+      MYSQL_USER: guarantees_query_user
+      MYSQL_PASSWORD: guarantees_query_pass
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_query_data:/var/lib/mysql
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: guarantees-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: guarantees-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Kafka UI
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: guarantees-kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+
+  # Redis (for caching)
+  redis:
+    image: redis:7-alpine
+    container_name: guarantees-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  mysql_command_data:
+  mysql_query_data:
+  redis_data:

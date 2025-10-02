@@ -1,0 +1,41 @@
+# Docker Compose Override for Development
+# This file provides development-specific overrides
+
+version: '3.8'
+
+services:
+  # Backend with development settings
+  backend:
+    environment:
+      - SPRING_PROFILES_ACTIVE=cqrs,docker
+      - LOG_LEVEL=DEBUG
+      - JAVA_OPTS=-Xmx1g -Xms512m -XX:+UseG1GC -Dspring.profiles.active=cqrs,docker
+    volumes:
+      - ./backend/logs:/app/logs
+      - ./backend/target:/app/target
+    ports:
+      - "8082:8080"
+      - "5005:5005"  # Debug port
+    command: ["java", "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005", "-jar", "app.jar"]
+
+  # Frontend with development settings
+  frontend:
+    environment:
+      - REACT_APP_API_URL=http://localhost:8082/api/v1
+      - REACT_APP_CQRS_API_URL=http://localhost:8082/api/v1/cqrs
+      - CHOKIDAR_USEPOLLING=true
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    ports:
+      - "3000:3000"
+
+  # Enable debug logging for Kafka
+  kafka:
+    environment:
+      KAFKA_LOG4J_LOGGERS: "kafka.controller=INFO,kafka.producer.async.DefaultEventHandler=INFO,state.change.logger=INFO"
+      KAFKA_LOG4J_ROOT_LOGLEVEL: INFO
+
+  # Enable debug logging for Redis
+  redis:
+    command: redis-server --appendonly yes --requirepass redispassword --loglevel debug
