@@ -1,5 +1,6 @@
 package com.interexport.guarantees.cqrs.query;
 
+import jakarta.persistence.*;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -8,8 +9,12 @@ import java.time.LocalDateTime;
  * Denormalized view for guarantee summaries
  * Optimized for dashboard and list queries
  */
+@Entity
+@Table(name = "guarantee_summary_view")
 public class GuaranteeSummaryView {
     
+    @Id
+    @Column(name = "guarantee_id")
     private String guaranteeId;
     private String reference;
     private String guaranteeType;
