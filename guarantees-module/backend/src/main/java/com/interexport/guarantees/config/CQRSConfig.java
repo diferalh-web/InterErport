@@ -6,6 +6,7 @@ import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+import org.springframework.context.annotation.Profile;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.orm.jpa.JpaTransactionManager;
 import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
@@ -18,8 +19,12 @@ import java.util.Properties;
 /**
  * CQRS Configuration for dual database setup
  * Command DB (Write) and Query DB (Read)
+ * 
+ * This configuration is ONLY active when the 'cqrs' Spring profile is enabled.
+ * For single database mode, use the default Spring Boot auto-configuration.
  */
 @Configuration
+@Profile("cqrs")
 public class CQRSConfig {
     
     /**
