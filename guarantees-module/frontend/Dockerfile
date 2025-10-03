@@ -7,8 +7,8 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install dependencies (including dev dependencies for build)
+RUN npm ci --legacy-peer-deps
 
 # Copy source code
 COPY . .
@@ -18,6 +18,9 @@ RUN npm run build
 
 # Production stage
 FROM nginx:alpine
+
+# Install curl for health check
+RUN apk add --no-cache curl
 
 # Copy built files from builder stage
 COPY --from=builder /app/build /usr/share/nginx/html

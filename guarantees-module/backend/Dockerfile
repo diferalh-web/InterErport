@@ -4,25 +4,29 @@ FROM openjdk:17-jdk-slim as builder
 # Set working directory
 WORKDIR /app
 
+# Install Maven
+RUN apt-get update && apt-get install -y maven && rm -rf /var/lib/apt/lists/*
+
 # Copy Maven files
 COPY pom.xml .
-COPY mvnw .
-COPY .mvn .mvn
 
 # Download dependencies
-RUN ./mvnw dependency:go-offline -B
+RUN mvn dependency:go-offline -B
 
 # Copy source code
 COPY src src
 
 # Build the application
-RUN ./mvnw clean package -DskipTests
+RUN mvn clean package -DskipTests
 
 # Runtime stage
-FROM openjdk:17-jre-slim
+FROM eclipse-temurin:17-jre-alpine
 
 # Set working directory
 WORKDIR /app
+
+# Install curl for health check
+RUN apk add --no-cache curl
 
 # Create logs directory
 RUN mkdir -p /app/logs
@@ -31,7 +35,7 @@ RUN mkdir -p /app/logs
 COPY --from=builder /app/target/*.jar app.jar
 
 # Create non-root user
-RUN groupadd -r appuser && useradd -r -g appuser appuser
+RUN addgroup -S appuser && adduser -S appuser -G appuser
 RUN chown -R appuser:appuser /app
 USER appuser
 

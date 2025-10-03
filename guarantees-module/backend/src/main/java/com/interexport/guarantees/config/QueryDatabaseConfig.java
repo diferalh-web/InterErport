@@ -23,3 +23,4 @@ public class QueryDatabaseConfig {
     // Query datasource and entity manager are defined in CQRSConfig
 }
 
+
