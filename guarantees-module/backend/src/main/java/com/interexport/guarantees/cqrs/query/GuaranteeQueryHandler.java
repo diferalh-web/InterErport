@@ -1,6 +1,7 @@
 package com.interexport.guarantees.cqrs.query;
 
 import com.interexport.guarantees.cqrs.event.GuaranteeCreatedEvent;
+import com.interexport.guarantees.entity.GuaranteeContract;
 import com.interexport.guarantees.repository.query.GuaranteeSummaryViewRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -90,6 +91,24 @@ public class GuaranteeQueryHandler {
      */
     public List<GuaranteeSummaryView> getGuaranteesByCurrency(String currency) {
         return guaranteeSummaryViewRepository.findByCurrency(currency);
+    }
+    
+    /**
+     * Get guarantee by ID
+     */
+    public GuaranteeContract getGuaranteeById(Long id) {
+        // This would typically query the command database or cache
+        // For now, we'll return null as this is a query handler for read models
+        return null;
+    }
+    
+    /**
+     * Get guarantees with pagination and filtering
+     */
+    public List<GuaranteeSummaryView> getGuarantees(int page, int size, String status, String currency) {
+        // This would implement pagination logic
+        // For now, return all guarantees
+        return guaranteeSummaryViewRepository.findAll();
     }
     
     /**

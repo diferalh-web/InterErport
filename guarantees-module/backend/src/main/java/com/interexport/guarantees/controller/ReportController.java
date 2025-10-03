@@ -150,6 +150,207 @@ public class ReportController {
     }
 
     /**
+     * Generate Commission Report
+     */
+    @GetMapping("/commissions")
+    @Operation(summary = "Generate Commission Report",
+               description = "Generate a commission report for the specified date range")
+    public ResponseEntity<byte[]> generateCommissionReport(
+            @Parameter(description = "Start date for report (YYYY-MM-DD)", example = "2025-01-01")
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            
+            @Parameter(description = "End date for report (YYYY-MM-DD)", example = "2025-12-31")
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            
+            @Parameter(description = "Report format (PDF, EXCEL, CSV)", example = "PDF")
+            @RequestParam(defaultValue = "PDF") String format,
+            
+            @Parameter(description = "Include projections", example = "false")
+            @RequestParam(defaultValue = "false") boolean includeProjections) {
+
+        byte[] content;
+        String filename;
+        MediaType contentType;
+
+        switch (format.toUpperCase()) {
+            case "PDF":
+                content = reportGenerationService.generateCommissionReportPDF(startDate, endDate, includeProjections);
+                filename = reportGenerationService.generateReportFilename("Commission", "PDF", startDate, endDate);
+                contentType = MediaType.APPLICATION_PDF;
+                break;
+            case "EXCEL":
+                content = reportGenerationService.generateCommissionReportExcel(startDate, endDate, includeProjections);
+                filename = reportGenerationService.generateReportFilename("Commission", "XLSX", startDate, endDate);
+                contentType = MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+                break;
+            case "CSV":
+                String csvContent = reportGenerationService.generateCommissionReportCSV(startDate, endDate, includeProjections);
+                return ResponseEntity.ok()
+                        .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + 
+                                reportGenerationService.generateReportFilename("Commission", "CSV", startDate, endDate) + "\"")
+                        .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
+                        .body(csvContent.getBytes());
+            default:
+                throw new IllegalArgumentException("Unsupported format: " + format);
+        }
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .contentType(contentType)
+                .body(content);
+    }
+
+    /**
+     * Generate Active Transactions Report
+     */
+    @GetMapping("/active-transactions")
+    @Operation(summary = "Generate Active Transactions Report",
+               description = "Generate an active transactions report for the specified date range")
+    public ResponseEntity<byte[]> generateActiveTransactionsReport(
+            @Parameter(description = "Start date for report (YYYY-MM-DD)", example = "2025-01-01")
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            
+            @Parameter(description = "End date for report (YYYY-MM-DD)", example = "2025-12-31")
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            
+            @Parameter(description = "Report format (PDF, EXCEL, CSV)", example = "PDF")
+            @RequestParam(defaultValue = "PDF") String format,
+            
+            @Parameter(description = "Include drafts", example = "false")
+            @RequestParam(defaultValue = "false") boolean includeDrafts,
+            
+            @Parameter(description = "Include expired", example = "false")
+            @RequestParam(defaultValue = "false") boolean includeExpired) {
+
+        byte[] content;
+        String filename;
+        MediaType contentType;
+
+        switch (format.toUpperCase()) {
+            case "PDF":
+                content = reportGenerationService.generateActiveTransactionsReportPDF(startDate, endDate, includeDrafts, includeExpired);
+                filename = reportGenerationService.generateReportFilename("ActiveTransactions", "PDF", startDate, endDate);
+                contentType = MediaType.APPLICATION_PDF;
+                break;
+            case "EXCEL":
+                content = reportGenerationService.generateActiveTransactionsReportExcel(startDate, endDate, includeDrafts, includeExpired);
+                filename = reportGenerationService.generateReportFilename("ActiveTransactions", "XLSX", startDate, endDate);
+                contentType = MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+                break;
+            case "CSV":
+                String csvContent = reportGenerationService.generateActiveTransactionsReportCSV(startDate, endDate, includeDrafts, includeExpired);
+                return ResponseEntity.ok()
+                        .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + 
+                                reportGenerationService.generateReportFilename("ActiveTransactions", "CSV", startDate, endDate) + "\"")
+                        .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
+                        .body(csvContent.getBytes());
+            default:
+                throw new IllegalArgumentException("Unsupported format: " + format);
+        }
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .contentType(contentType)
+                .body(content);
+    }
+
+    /**
+     * Generate Audit Report
+     */
+    @GetMapping("/audit")
+    @Operation(summary = "Generate Audit Report",
+               description = "Generate an audit report for the specified date range")
+    public ResponseEntity<byte[]> generateAuditReport(
+            @Parameter(description = "Start date for report (YYYY-MM-DD)", example = "2025-01-01")
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            
+            @Parameter(description = "End date for report (YYYY-MM-DD)", example = "2025-12-31")
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            
+            @Parameter(description = "Report format (PDF, EXCEL, CSV)", example = "PDF")
+            @RequestParam(defaultValue = "PDF") String format) {
+
+        byte[] content;
+        String filename;
+        MediaType contentType;
+
+        switch (format.toUpperCase()) {
+            case "PDF":
+                content = reportGenerationService.generateAuditReportPDF(startDate, endDate);
+                filename = reportGenerationService.generateReportFilename("Audit", "PDF", startDate, endDate);
+                contentType = MediaType.APPLICATION_PDF;
+                break;
+            case "EXCEL":
+                content = reportGenerationService.generateAuditReportExcel(startDate, endDate);
+                filename = reportGenerationService.generateReportFilename("Audit", "XLSX", startDate, endDate);
+                contentType = MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+                break;
+            case "CSV":
+                String csvContent = reportGenerationService.generateAuditReportCSV(startDate, endDate);
+                return ResponseEntity.ok()
+                        .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + 
+                                reportGenerationService.generateReportFilename("Audit", "CSV", startDate, endDate) + "\"")
+                        .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
+                        .body(csvContent.getBytes());
+            default:
+                throw new IllegalArgumentException("Unsupported format: " + format);
+        }
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .contentType(contentType)
+                .body(content);
+    }
+
+    /**
+     * Generate Expiry Alert Report
+     */
+    @GetMapping("/expiry-alerts")
+    @Operation(summary = "Generate Expiry Alert Report",
+               description = "Generate an expiry alert report for guarantees expiring within the specified days")
+    public ResponseEntity<byte[]> generateExpiryAlertReport(
+            @Parameter(description = "Days ahead to check for expiry", example = "30")
+            @RequestParam(defaultValue = "30") int daysAhead,
+            
+            @Parameter(description = "Report format (PDF, EXCEL, CSV)", example = "PDF")
+            @RequestParam(defaultValue = "PDF") String format) {
+
+        byte[] content;
+        String filename;
+        MediaType contentType;
+
+        switch (format.toUpperCase()) {
+            case "PDF":
+                content = reportGenerationService.generateExpiryAlertReportPDF(daysAhead);
+                filename = reportGenerationService.generateReportFilename("ExpiryAlert", "PDF", 
+                        LocalDate.now(), LocalDate.now().plusDays(daysAhead));
+                contentType = MediaType.APPLICATION_PDF;
+                break;
+            case "EXCEL":
+                content = reportGenerationService.generateExpiryAlertReportExcel(daysAhead);
+                filename = reportGenerationService.generateReportFilename("ExpiryAlert", "XLSX", 
+                        LocalDate.now(), LocalDate.now().plusDays(daysAhead));
+                contentType = MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+                break;
+            case "CSV":
+                String csvContent = reportGenerationService.generateExpiryAlertReportCSV(daysAhead);
+                return ResponseEntity.ok()
+                        .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + 
+                                reportGenerationService.generateReportFilename("ExpiryAlert", "CSV", 
+                                        LocalDate.now(), LocalDate.now().plusDays(daysAhead)) + "\"")
+                        .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
+                        .body(csvContent.getBytes());
+            default:
+                throw new IllegalArgumentException("Unsupported format: " + format);
+        }
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .contentType(contentType)
+                .body(content);
+    }
+
+    /**
      * Get report generation status and available report types
      */
     @GetMapping("/status")
@@ -161,7 +362,10 @@ public class ReportController {
         status.setAvailableReports(java.util.Arrays.asList(
             "Guarantees Report", 
             "Dashboard Summary Report", 
-            "Commission Report"
+            "Commission Report",
+            "Active Transactions Report",
+            "Audit Report",
+            "Expiry Alert Report"
         ));
         status.setReportGenerationEnabled(true);
         status.setMaxDateRange(365); // Maximum 365 days

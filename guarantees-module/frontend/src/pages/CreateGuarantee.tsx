@@ -226,8 +226,16 @@ const CreateGuarantee: React.FC = () => {
                       placeholder={t('forms.placeholders.enterAmount')}
                       min={0.01}
                       precision={2}
-                      formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                      parser={(value) => value!.replace(/\$\s?|(,*)/g, '') as any}
+                      formatter={(value) => {
+                        if (!value) return '';
+                        const num = parseFloat(value.toString());
+                        if (isNaN(num)) return '';
+                        return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                      }}
+                      parser={(value) => {
+                        if (!value) return '';
+                        return parseFloat(value.replace(/,/g, ''));
+                      }}
                     />
                   </Form.Item>
                 </Col>

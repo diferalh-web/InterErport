@@ -77,6 +77,11 @@ public interface GuaranteeContractRepository extends JpaRepository<GuaranteeCont
     List<GuaranteeContract> findByExpiryDateBetween(LocalDate startDate, LocalDate endDate);
 
     /**
+     * Find guarantees expiring within a date range ordered by expiry date ascending
+     */
+    List<GuaranteeContract> findByExpiryDateBetweenOrderByExpiryDateAsc(LocalDate startDate, LocalDate endDate);
+
+    /**
      * Find guarantees expiring on or before a specific date
      */
     List<GuaranteeContract> findByExpiryDateLessThanEqual(LocalDate expiryDate);

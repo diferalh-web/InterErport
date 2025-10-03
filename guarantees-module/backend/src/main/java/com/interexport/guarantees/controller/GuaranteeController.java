@@ -1,5 +1,6 @@
 package com.interexport.guarantees.controller;
 
+import com.interexport.guarantees.dto.GuaranteeCreateRequest;
 import com.interexport.guarantees.entity.GuaranteeContract;
 import com.interexport.guarantees.entity.enums.GuaranteeStatus;
 import com.interexport.guarantees.entity.enums.GuaranteeType;
@@ -56,7 +57,25 @@ public class GuaranteeController {
         @ApiResponse(responseCode = "409", description = "Guarantee reference already exists")
     })
     public ResponseEntity<GuaranteeContract> createGuarantee(
-            @Valid @RequestBody GuaranteeContract guarantee) {
+            @Valid @RequestBody GuaranteeCreateRequest request) {
+        
+        // Convert DTO to entity
+        GuaranteeContract guarantee = new GuaranteeContract();
+        guarantee.setReference(request.getReference());
+        guarantee.setGuaranteeType(request.getGuaranteeType());
+        guarantee.setAmount(request.getAmount());
+        guarantee.setCurrency(request.getCurrency());
+        guarantee.setIssueDate(request.getIssueDate());
+        guarantee.setExpiryDate(request.getExpiryDate());
+        guarantee.setApplicantId(request.getApplicantId());
+        guarantee.setBeneficiaryName(request.getBeneficiaryName());
+        guarantee.setBeneficiaryAddress(request.getBeneficiaryAddress());
+        guarantee.setAdvisingBankBic(request.getAdvisingBankBic());
+        guarantee.setIsDomestic(request.getIsDomestic());
+        guarantee.setUnderlyingContractRef(request.getUnderlyingContractRef());
+        guarantee.setSpecialConditions(request.getSpecialConditions());
+        guarantee.setGuaranteeText(request.getGuaranteeText());
+        guarantee.setLanguage(request.getLanguage());
         
         GuaranteeContract createdGuarantee = guaranteeService.createGuarantee(guarantee);
         

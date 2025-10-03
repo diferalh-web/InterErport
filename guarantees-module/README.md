@@ -8,12 +8,20 @@ This POC implements core functionality for managing banking guarantees based on 
 
 ## 🏗️ Architecture
 
+### CQRS (Command Query Responsibility Segregation) Architecture
+- **Command Side**: Handles write operations and business logic
+- **Query Side**: Optimized read operations with denormalized views
+- **Event Sourcing**: Kafka-based event streaming for data synchronization
+- **Cache Layer**: Redis for high-performance data access
+
 ### Backend (Spring Boot 3.2.0)
 - **Framework**: Spring Boot with Spring Data JPA
-- **Database**: H2 (development) / PostgreSQL (production)
+- **Databases**: MySQL (Command & Query models)
+- **Message Queue**: Apache Kafka + Zookeeper
+- **Cache**: Redis for session storage and caching
 - **Security**: Spring Security with basic authentication
 - **API Documentation**: OpenAPI 3 (Swagger)
-- **Testing**: JUnit 5, Mockito, TestContainers
+- **Testing**: JUnit 5, Mockito, TestContainers, CQRS Integration Tests
 
 ### Frontend (React 18)
 - **Framework**: React with TypeScript
@@ -21,6 +29,14 @@ This POC implements core functionality for managing banking guarantees based on 
 - **State Management**: React Query for server state
 - **Routing**: React Router v6
 - **Build Tool**: Create React App
+- **Internationalization**: Multi-language support (EN/ES)
+
+### Infrastructure (Docker)
+- **Containerization**: Docker Compose with full stack
+- **Databases**: MySQL 8.0 (Command & Query)
+- **Cache**: Redis 7 Alpine
+- **Message Queue**: Kafka + Zookeeper
+- **Management Tools**: Kafka UI, Redis Commander, phpMyAdmin
 
 ## 🚀 Features Implemented
 
@@ -72,12 +88,33 @@ guarantees-module/
 ## 🛠️ Setup & Installation
 
 ### Prerequisites
-- Java 17+
-- Node.js 18+
-- Maven 3.8+
-- npm/yarn
+- Docker & Docker Compose
+- Java 17+ (for local development)
+- Node.js 18+ (for local development)
+- Maven 3.8+ (for local development)
 
-### Backend Setup
+### 🐳 Docker Setup (Recommended)
+
+1. **Start the complete application stack:**
+   ```bash
+   docker-compose -f docker-compose.full.yml up -d
+   ```
+
+2. **Access the application:**
+   - **Frontend**: http://localhost:3000
+   - **Backend API**: http://localhost:8082/api/v1
+   - **Kafka UI**: http://localhost:8080
+   - **Redis Commander**: http://localhost:8081
+   - **phpMyAdmin**: http://localhost:8083
+
+3. **Check service status:**
+   ```bash
+   docker-compose -f docker-compose.full.yml ps
+   ```
+
+### 🛠️ Local Development Setup
+
+#### Backend Setup
 
 1. Navigate to the backend directory:
    ```bash
@@ -93,9 +130,8 @@ guarantees-module/
 3. Access the API:
    - REST API: http://localhost:8080/api/v1
    - Swagger UI: http://localhost:8080/swagger-ui.html
-   - H2 Console: http://localhost:8080/h2-console
 
-### Frontend Setup
+#### Frontend Setup
 
 1. Navigate to the frontend directory:
    ```bash
@@ -117,6 +153,13 @@ guarantees-module/
 
 ## 🧪 Testing
 
+### CQRS & Redis Integration Tests
+```bash
+# Run comprehensive CQRS and Redis tests
+cd backend
+mvn test -Dtest=CqrsRedisIntegrationTest
+```
+
 ### Unit Tests (Backend)
 ```bash
 cd backend
@@ -135,6 +178,21 @@ mvn jacoco:report
 cd frontend
 npm test
 ```
+
+### Automated Test Agent
+```bash
+# Run automated test suite
+./run-tests.sh  # Linux/Mac
+./run-tests.ps1 # Windows PowerShell
+```
+
+### Test Cases Implemented
+- **10 CQRS Integration Tests**: Command/Query separation validation
+- **Redis Caching Tests**: Cache hit/miss scenarios
+- **Event Streaming Tests**: Kafka event processing
+- **Concurrent Operations**: Multi-threaded guarantee creation
+- **Cache Expiration**: Redis TTL validation
+- **Eventual Consistency**: Command/Query synchronization
 
 ## 🔑 API Endpoints
 

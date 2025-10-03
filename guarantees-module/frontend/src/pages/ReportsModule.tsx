@@ -272,6 +272,30 @@ const ReportsModule: React.FC = () => {
     });
   };
 
+  const handleViewReportDetails = (reportId: string) => {
+    // Mock view details functionality
+    notification.info({
+      message: 'Report Details',
+      description: `Viewing details for report ${reportId}`
+    });
+  };
+
+  const handleDeleteReport = (reportId: string) => {
+    Modal.confirm({
+      title: 'Delete Report',
+      content: 'Are you sure you want to delete this report?',
+      okText: t('common.yes'),
+      cancelText: t('common.no'),
+      onOk: () => {
+        // Mock delete functionality
+        notification.success({
+          message: 'Report Deleted',
+          description: 'The report has been deleted successfully'
+        });
+      }
+    });
+  };
+
   const reportRequestColumns = [
     {
       title: t('reports.reportName'),
@@ -334,6 +358,7 @@ const ReportsModule: React.FC = () => {
           <Button 
             icon={<EyeOutlined />}
             size="small"
+            onClick={() => handleViewReportDetails(record.id)}
           >
             {t('reports.buttons.details')}
           </Button>
@@ -341,6 +366,7 @@ const ReportsModule: React.FC = () => {
             icon={<DeleteOutlined />}
             size="small"
             danger
+            onClick={() => handleDeleteReport(record.id)}
           >
             {t('reports.buttons.delete')}
           </Button>

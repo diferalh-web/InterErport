@@ -4,6 +4,7 @@ import com.interexport.guarantees.entity.GuaranteeContract;
 import com.interexport.guarantees.repository.GuaranteeContractRepository;
 import com.interexport.guarantees.repository.ClaimRepository;
 import com.interexport.guarantees.repository.AmendmentRepository;
+import com.interexport.guarantees.service.DashboardService;
 
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfWriter;
@@ -451,6 +452,497 @@ public class ReportGenerationService {
         
         return String.format("%s_Report_%s_%s.%s", 
             reportType, dateRange, timestamp, format.toLowerCase());
+    }
+
+    /**
+     * Generate Commission Report in PDF format
+     */
+    public byte[] generateCommissionReportPDF(LocalDate fromDate, LocalDate toDate, boolean includeProjections) {
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            PdfWriter writer = new PdfWriter(baos);
+            PdfDocument pdfDocument = new PdfDocument(writer);
+            Document document = new Document(pdfDocument);
+
+            // Report Header
+            document.add(new Paragraph("InterExport - Commission Report")
+                .setFontSize(20)
+                .setTextAlignment(TextAlignment.CENTER)
+                .setBold());
+            
+            document.add(new Paragraph(String.format("Report Period: %s to %s", 
+                fromDate.format(DATE_FORMAT), toDate.format(DATE_FORMAT)))
+                .setFontSize(12)
+                .setTextAlignment(TextAlignment.CENTER));
+            
+            document.add(new Paragraph(String.format("Generated: %s", 
+                LocalDateTime.now().format(DATETIME_FORMAT)))
+                .setFontSize(10)
+                .setTextAlignment(TextAlignment.RIGHT));
+
+            // Commission summary
+            document.add(new Paragraph("Commission Summary").setFontSize(16).setBold());
+            
+            // Get commission data (simplified for now)
+            BigDecimal totalCommissions = BigDecimal.ZERO; // TODO: Calculate from actual data
+            
+            Table summaryTable = new Table(UnitValue.createPercentArray(2));
+            summaryTable.addCell(new com.itextpdf.layout.element.Cell().add(new Paragraph("Total Commissions")).setBold());
+            summaryTable.addCell(new com.itextpdf.layout.element.Cell().add(new Paragraph(totalCommissions.toString())));
+            
+            document.add(summaryTable);
+            document.close();
+            return baos.toByteArray();
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to generate commission PDF report", e);
+        }
+    }
+
+    /**
+     * Generate Commission Report in Excel format
+     */
+    public byte[] generateCommissionReportExcel(LocalDate fromDate, LocalDate toDate, boolean includeProjections) {
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            Workbook workbook = new XSSFWorkbook();
+            Sheet sheet = workbook.createSheet("Commission Report");
+
+            // Create header row
+            Row headerRow = sheet.createRow(0);
+            String[] headers = {"Date", "Guarantee Reference", "Commission Amount", "Currency", "Status"};
+            
+            for (int i = 0; i < headers.length; i++) {
+                Cell cell = headerRow.createCell(i);
+                cell.setCellValue(headers[i]);
+                cell.setCellStyle(createHeaderStyle(workbook));
+            }
+
+            // Add sample data (TODO: Replace with actual data)
+            Row dataRow = sheet.createRow(1);
+            dataRow.createCell(0).setCellValue(fromDate.format(DATE_FORMAT));
+            dataRow.createCell(1).setCellValue("GT-20250101-001");
+            dataRow.createCell(2).setCellValue(1000.00);
+            dataRow.createCell(3).setCellValue("USD");
+            dataRow.createCell(4).setCellValue("PAID");
+
+            // Auto-size columns
+            for (int i = 0; i < headers.length; i++) {
+                sheet.autoSizeColumn(i);
+            }
+
+            workbook.write(baos);
+            return baos.toByteArray();
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to generate commission Excel report", e);
+        }
+    }
+
+    /**
+     * Generate Commission Report in CSV format
+     */
+    public String generateCommissionReportCSV(LocalDate fromDate, LocalDate toDate, boolean includeProjections) {
+        try (StringWriter writer = new StringWriter();
+             CSVWriter csvWriter = new CSVWriter(writer)) {
+            
+            // Write header
+            csvWriter.writeNext(new String[]{"Date", "Guarantee Reference", "Commission Amount", "Currency", "Status"});
+            
+            // Write sample data (TODO: Replace with actual data)
+            csvWriter.writeNext(new String[]{
+                fromDate.format(DATE_FORMAT),
+                "GT-20250101-001",
+                "1000.00",
+                "USD",
+                "PAID"
+            });
+            
+            return writer.toString();
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to generate commission CSV report", e);
+        }
+    }
+
+    /**
+     * Generate Active Transactions Report in PDF format
+     */
+    public byte[] generateActiveTransactionsReportPDF(LocalDate fromDate, LocalDate toDate, boolean includeDrafts, boolean includeExpired) {
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            PdfWriter writer = new PdfWriter(baos);
+            PdfDocument pdfDocument = new PdfDocument(writer);
+            Document document = new Document(pdfDocument);
+
+            // Report Header
+            document.add(new Paragraph("InterExport - Active Transactions Report")
+                .setFontSize(20)
+                .setTextAlignment(TextAlignment.CENTER)
+                .setBold());
+            
+            document.add(new Paragraph(String.format("Report Period: %s to %s", 
+                fromDate.format(DATE_FORMAT), toDate.format(DATE_FORMAT)))
+                .setFontSize(12)
+                .setTextAlignment(TextAlignment.CENTER));
+
+            // Get active transactions data
+            List<GuaranteeContract> guarantees = getGuaranteesForReport(fromDate, toDate, "ALL");
+            
+            // Filter based on parameters
+            if (!includeDrafts) {
+                guarantees = guarantees.stream()
+                    .filter(g -> !g.getStatus().name().equals("DRAFT"))
+                    .collect(Collectors.toList());
+            }
+            
+            if (!includeExpired) {
+                LocalDate now = LocalDate.now();
+                guarantees = guarantees.stream()
+                    .filter(g -> g.getExpiryDate().isAfter(now))
+                    .collect(Collectors.toList());
+            }
+
+            // Summary
+            document.add(new Paragraph("Active Transactions Summary").setFontSize(16).setBold());
+            
+            Table summaryTable = new Table(UnitValue.createPercentArray(2));
+            summaryTable.addCell(new com.itextpdf.layout.element.Cell().add(new Paragraph("Total Active Guarantees")).setBold());
+            summaryTable.addCell(new com.itextpdf.layout.element.Cell().add(new Paragraph(String.valueOf(guarantees.size()))));
+            
+            BigDecimal totalAmount = guarantees.stream()
+                .map(GuaranteeContract::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+            
+            summaryTable.addCell(new com.itextpdf.layout.element.Cell().add(new Paragraph("Total Amount")).setBold());
+            summaryTable.addCell(new com.itextpdf.layout.element.Cell().add(new Paragraph(totalAmount.toString())));
+            
+            document.add(summaryTable);
+            document.close();
+            return baos.toByteArray();
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to generate active transactions PDF report", e);
+        }
+    }
+
+    /**
+     * Generate Active Transactions Report in Excel format
+     */
+    public byte[] generateActiveTransactionsReportExcel(LocalDate fromDate, LocalDate toDate, boolean includeDrafts, boolean includeExpired) {
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            Workbook workbook = new XSSFWorkbook();
+            Sheet sheet = workbook.createSheet("Active Transactions");
+
+            // Create header row
+            Row headerRow = sheet.createRow(0);
+            String[] headers = {"Reference", "Type", "Amount", "Currency", "Status", "Issue Date", "Expiry Date"};
+            
+            for (int i = 0; i < headers.length; i++) {
+                Cell cell = headerRow.createCell(i);
+                cell.setCellValue(headers[i]);
+                cell.setCellStyle(createHeaderStyle(workbook));
+            }
+
+            // Get and add data
+            List<GuaranteeContract> guarantees = getGuaranteesForReport(fromDate, toDate, "ALL");
+            
+            int rowNum = 1;
+            for (GuaranteeContract guarantee : guarantees) {
+                Row row = sheet.createRow(rowNum++);
+                row.createCell(0).setCellValue(guarantee.getReference());
+                row.createCell(1).setCellValue(guarantee.getGuaranteeType().name());
+                row.createCell(2).setCellValue(guarantee.getAmount().doubleValue());
+                row.createCell(3).setCellValue(guarantee.getCurrency());
+                row.createCell(4).setCellValue(guarantee.getStatus().name());
+                row.createCell(5).setCellValue(guarantee.getIssueDate().format(DATE_FORMAT));
+                row.createCell(6).setCellValue(guarantee.getExpiryDate().format(DATE_FORMAT));
+            }
+
+            // Auto-size columns
+            for (int i = 0; i < headers.length; i++) {
+                sheet.autoSizeColumn(i);
+            }
+
+            workbook.write(baos);
+            return baos.toByteArray();
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to generate active transactions Excel report", e);
+        }
+    }
+
+    /**
+     * Generate Active Transactions Report in CSV format
+     */
+    public String generateActiveTransactionsReportCSV(LocalDate fromDate, LocalDate toDate, boolean includeDrafts, boolean includeExpired) {
+        try (StringWriter writer = new StringWriter();
+             CSVWriter csvWriter = new CSVWriter(writer)) {
+            
+            // Write header
+            csvWriter.writeNext(new String[]{"Reference", "Type", "Amount", "Currency", "Status", "Issue Date", "Expiry Date"});
+            
+            // Get and write data
+            List<GuaranteeContract> guarantees = getGuaranteesForReport(fromDate, toDate, "ALL");
+            
+            for (GuaranteeContract guarantee : guarantees) {
+                csvWriter.writeNext(new String[]{
+                    guarantee.getReference(),
+                    guarantee.getGuaranteeType().name(),
+                    guarantee.getAmount().toString(),
+                    guarantee.getCurrency(),
+                    guarantee.getStatus().name(),
+                    guarantee.getIssueDate().format(DATE_FORMAT),
+                    guarantee.getExpiryDate().format(DATE_FORMAT)
+                });
+            }
+            
+            return writer.toString();
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to generate active transactions CSV report", e);
+        }
+    }
+
+    /**
+     * Generate Audit Report in PDF format
+     */
+    public byte[] generateAuditReportPDF(LocalDate fromDate, LocalDate toDate) {
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            PdfWriter writer = new PdfWriter(baos);
+            PdfDocument pdfDocument = new PdfDocument(writer);
+            Document document = new Document(pdfDocument);
+
+            // Report Header
+            document.add(new Paragraph("InterExport - Audit Report")
+                .setFontSize(20)
+                .setTextAlignment(TextAlignment.CENTER)
+                .setBold());
+            
+            document.add(new Paragraph(String.format("Report Period: %s to %s", 
+                fromDate.format(DATE_FORMAT), toDate.format(DATE_FORMAT)))
+                .setFontSize(12)
+                .setTextAlignment(TextAlignment.CENTER));
+
+            // Audit summary
+            document.add(new Paragraph("Audit Summary").setFontSize(16).setBold());
+            
+            Table summaryTable = new Table(UnitValue.createPercentArray(2));
+            summaryTable.addCell(new com.itextpdf.layout.element.Cell().add(new Paragraph("Audit Period")).setBold());
+            summaryTable.addCell(new com.itextpdf.layout.element.Cell().add(new Paragraph(
+                String.format("%s to %s", fromDate.format(DATE_FORMAT), toDate.format(DATE_FORMAT)))));
+            
+            summaryTable.addCell(new com.itextpdf.layout.element.Cell().add(new Paragraph("Generated")).setBold());
+            summaryTable.addCell(new com.itextpdf.layout.element.Cell().add(new Paragraph(
+                LocalDateTime.now().format(DATETIME_FORMAT))));
+            
+            document.add(summaryTable);
+            document.close();
+            return baos.toByteArray();
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to generate audit PDF report", e);
+        }
+    }
+
+    /**
+     * Generate Audit Report in Excel format
+     */
+    public byte[] generateAuditReportExcel(LocalDate fromDate, LocalDate toDate) {
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            Workbook workbook = new XSSFWorkbook();
+            Sheet sheet = workbook.createSheet("Audit Report");
+
+            // Create header row
+            Row headerRow = sheet.createRow(0);
+            String[] headers = {"Date", "Action", "User", "Entity", "Details"};
+            
+            for (int i = 0; i < headers.length; i++) {
+                Cell cell = headerRow.createCell(i);
+                cell.setCellValue(headers[i]);
+                cell.setCellStyle(createHeaderStyle(workbook));
+            }
+
+            // Add sample audit data (TODO: Replace with actual audit data)
+            Row dataRow = sheet.createRow(1);
+            dataRow.createCell(0).setCellValue(fromDate.format(DATE_FORMAT));
+            dataRow.createCell(1).setCellValue("CREATE");
+            dataRow.createCell(2).setCellValue("admin");
+            dataRow.createCell(3).setCellValue("Guarantee");
+            dataRow.createCell(4).setCellValue("Guarantee created successfully");
+
+            // Auto-size columns
+            for (int i = 0; i < headers.length; i++) {
+                sheet.autoSizeColumn(i);
+            }
+
+            workbook.write(baos);
+            return baos.toByteArray();
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to generate audit Excel report", e);
+        }
+    }
+
+    /**
+     * Generate Audit Report in CSV format
+     */
+    public String generateAuditReportCSV(LocalDate fromDate, LocalDate toDate) {
+        try (StringWriter writer = new StringWriter();
+             CSVWriter csvWriter = new CSVWriter(writer)) {
+            
+            // Write header
+            csvWriter.writeNext(new String[]{"Date", "Action", "User", "Entity", "Details"});
+            
+            // Write sample audit data (TODO: Replace with actual audit data)
+            csvWriter.writeNext(new String[]{
+                fromDate.format(DATE_FORMAT),
+                "CREATE",
+                "admin",
+                "Guarantee",
+                "Guarantee created successfully"
+            });
+            
+            return writer.toString();
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to generate audit CSV report", e);
+        }
+    }
+
+    /**
+     * Generate Expiry Alert Report in PDF format
+     */
+    public byte[] generateExpiryAlertReportPDF(int daysAhead) {
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            PdfWriter writer = new PdfWriter(baos);
+            PdfDocument pdfDocument = new PdfDocument(writer);
+            Document document = new Document(pdfDocument);
+
+            // Report Header
+            document.add(new Paragraph("InterExport - Expiry Alert Report")
+                .setFontSize(20)
+                .setTextAlignment(TextAlignment.CENTER)
+                .setBold());
+            
+            document.add(new Paragraph(String.format("Guarantees expiring within %d days", daysAhead))
+                .setFontSize(12)
+                .setTextAlignment(TextAlignment.CENTER));
+
+            // Get expiring guarantees
+            LocalDate alertDate = LocalDate.now().plusDays(daysAhead);
+            List<GuaranteeContract> expiringGuarantees = guaranteeRepository.findByExpiryDateBetweenOrderByExpiryDateAsc(
+                LocalDate.now(), alertDate);
+
+            // Summary
+            document.add(new Paragraph("Expiry Alert Summary").setFontSize(16).setBold());
+            
+            Table summaryTable = new Table(UnitValue.createPercentArray(2));
+            summaryTable.addCell(new com.itextpdf.layout.element.Cell().add(new Paragraph("Guarantees Expiring")).setBold());
+            summaryTable.addCell(new com.itextpdf.layout.element.Cell().add(new Paragraph(String.valueOf(expiringGuarantees.size()))));
+            
+            BigDecimal totalAmount = expiringGuarantees.stream()
+                .map(GuaranteeContract::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+            
+            summaryTable.addCell(new com.itextpdf.layout.element.Cell().add(new Paragraph("Total Amount")).setBold());
+            summaryTable.addCell(new com.itextpdf.layout.element.Cell().add(new Paragraph(totalAmount.toString())));
+            
+            document.add(summaryTable);
+            document.close();
+            return baos.toByteArray();
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to generate expiry alert PDF report", e);
+        }
+    }
+
+    /**
+     * Generate Expiry Alert Report in Excel format
+     */
+    public byte[] generateExpiryAlertReportExcel(int daysAhead) {
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            Workbook workbook = new XSSFWorkbook();
+            Sheet sheet = workbook.createSheet("Expiry Alert");
+
+            // Create header row
+            Row headerRow = sheet.createRow(0);
+            String[] headers = {"Reference", "Type", "Amount", "Currency", "Expiry Date", "Days Until Expiry"};
+            
+            for (int i = 0; i < headers.length; i++) {
+                Cell cell = headerRow.createCell(i);
+                cell.setCellValue(headers[i]);
+                cell.setCellStyle(createHeaderStyle(workbook));
+            }
+
+            // Get and add expiring guarantees
+            LocalDate alertDate = LocalDate.now().plusDays(daysAhead);
+            List<GuaranteeContract> expiringGuarantees = guaranteeRepository.findByExpiryDateBetweenOrderByExpiryDateAsc(
+                LocalDate.now(), alertDate);
+            
+            int rowNum = 1;
+            for (GuaranteeContract guarantee : expiringGuarantees) {
+                Row row = sheet.createRow(rowNum++);
+                row.createCell(0).setCellValue(guarantee.getReference());
+                row.createCell(1).setCellValue(guarantee.getGuaranteeType().name());
+                row.createCell(2).setCellValue(guarantee.getAmount().doubleValue());
+                row.createCell(3).setCellValue(guarantee.getCurrency());
+                row.createCell(4).setCellValue(guarantee.getExpiryDate().format(DATE_FORMAT));
+                row.createCell(5).setCellValue(LocalDate.now().until(guarantee.getExpiryDate()).getDays());
+            }
+
+            // Auto-size columns
+            for (int i = 0; i < headers.length; i++) {
+                sheet.autoSizeColumn(i);
+            }
+
+            workbook.write(baos);
+            return baos.toByteArray();
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to generate expiry alert Excel report", e);
+        }
+    }
+
+    /**
+     * Generate Expiry Alert Report in CSV format
+     */
+    public String generateExpiryAlertReportCSV(int daysAhead) {
+        try (StringWriter writer = new StringWriter();
+             CSVWriter csvWriter = new CSVWriter(writer)) {
+            
+            // Write header
+            csvWriter.writeNext(new String[]{"Reference", "Type", "Amount", "Currency", "Expiry Date", "Days Until Expiry"});
+            
+            // Get and write expiring guarantees
+            LocalDate alertDate = LocalDate.now().plusDays(daysAhead);
+            List<GuaranteeContract> expiringGuarantees = guaranteeRepository.findByExpiryDateBetweenOrderByExpiryDateAsc(
+                LocalDate.now(), alertDate);
+            
+            for (GuaranteeContract guarantee : expiringGuarantees) {
+                csvWriter.writeNext(new String[]{
+                    guarantee.getReference(),
+                    guarantee.getGuaranteeType().name(),
+                    guarantee.getAmount().toString(),
+                    guarantee.getCurrency(),
+                    guarantee.getExpiryDate().format(DATE_FORMAT),
+                    String.valueOf(LocalDate.now().until(guarantee.getExpiryDate()).getDays())
+                });
+            }
+            
+            return writer.toString();
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to generate expiry alert CSV report", e);
+        }
+    }
+
+    /**
+     * Create header style for Excel cells
+     */
+    private CellStyle createHeaderStyle(Workbook workbook) {
+        CellStyle style = workbook.createCellStyle();
+        Font font = workbook.createFont();
+        font.setBold(true);
+        style.setFont(font);
+        return style;
     }
 
     /**

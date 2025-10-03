@@ -40,7 +40,8 @@
     "active": "Activo",
     "inactive": "Inactivo",
     "enabled": "Habilitado",
-    "disabled": "Deshabilitado"
+    "disabled": "Deshabilitado",
+    "notes": "Notas"
   },
   "navigation": {
     "dashboard": "Tablero",
